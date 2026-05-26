@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Y2K Space Cars</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        cursor: url('https://cur.cursors-4u.net/cursors/cur-9/cur817.cur'), auto;
+    }
+
+    body {
+        overflow: hidden;
+        background: 
+            radial-gradient(circle at 50% 30%, #2a004d 0%, #0a0014 50%, #000 100%);
+        height: 100vh;
+    }
+
+    /* Background Stars */
+    .stars {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    .star {
+        position: absolute;
+        background: white;
+        border-radius: 50%;
+        box-shadow: 0 0 6px white;
+        animation: twinkle 3s infinite alternate;
+    }
+
+    @keyframes twinkle {
+        0%   { opacity: 0.4; }
+        100% { opacity: 1; }
+    }
+
+    /* Shooting Stars */
+    .shooting-stars {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 2;
+    }
+
+    .shooting-star {
+        position: absolute;
+        width: 120px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #ffffff, transparent);
+        box-shadow: 0 0 12px #a0f0ff;
+        transform: rotate(25deg);
+        opacity: 0;
+        animation: shoot linear forwards;
+    }
+
+    @keyframes shoot {
+        0% {
+            transform: translateX(-150px) translateY(0) rotate(25deg);
+            opacity: 0;
+        }
+        20% {
+            opacity: 0.9;
+        }
+        80% {
+            opacity: 0.9;
+        }
+        100% {
+            transform: translateX(800px) translateY(400px) rotate(25deg);
+            opacity: 0;
+        }
+    }
+
+    .car {
+        position: absolute;
+        width: 160px;
+        transition: all 0.2s;
+        user-select: none;
+        filter: drop-shadow(0 0 15px hotpink) drop-shadow(0 0 30px deeppink);
+        z-index: 10;
+    }
+
+    .car:hover {
+        transform: scale(1.15) rotate(8deg) !important;
+        filter: drop-shadow(0 0 25px #ff00ff) drop-shadow(0 0 40px #00ffff);
+    }
+</style>
+</head>
+<body>
+
+<div class="stars" id="stars"></div>
+<div class="shooting-stars" id="shootingStars"></div>
+
+<img src="https://pngimg.com/d/sports_car_PNG37.png" class="car" id="car1"/>
+<img src="https://pngimg.com/d/sports_car_PNG37.png" class="car" id="car2" style="filter: hue-rotate(200deg) saturate(2.5);"/>
+<img src="https://pngimg.com/d/sports_car_PNG37.png" class="car" id="car3" style="filter: hue-rotate(320deg) saturate(3);"/>
+
+<audio id="sound1" src="https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3"></audio>
+<audio id="sound2" src="https://assets.mixkit.co/active_storage/sfx/1558/1558-preview.mp3"></audio>
+<audio id="sound3" src="https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3"></audio>
+
+<script>
+const cars = [
+    { el: document.getElementById('car1'), angle: 0,    radius: 220, speed: 0.012 },
+    { el: document.getElementById('car2'), angle: Math.PI, radius: 320, speed: 0.009 },
+    { el: document.getElementById('car3'), angle: Math.PI/2, radius: 260, speed: 0.015 }
+];
+
+// Create background stars
+function createStars(count) {
+    const container = document.getElementById('stars');
+    for (let i = 0; i < count; i++) {
+        const star = document.createElement('div');
+        star.className = 'star';
+        
+        const size = Math.random() * 3 + 0.8;
+        star.style.width = `${size}px`;
+        star.style.height = `${size}px`;
+        star.style.left = `${Math.random() * 100}%`;
+        star.style.top = `${Math.random() * 100}%`;
+        star.style.animationDelay = `-${Math.random() * 4}s`;
+        star.style.opacity = Math.random() * 0.7 + 0.4;
+        
+        container.appendChild(star);
+    }
+}
+
+// Create shooting star
+function createShootingStar() {
+    const container = document.getElementById('shootingStars');
+    const star = document.createElement('div');
+    star.className = 'shooting-star';
+    
+    // Random starting position (mostly top/left)
+    const startX = Math.random() * window.innerWidth * 0.7;
+    const startY = Math.random() * window.innerHeight * 0.4;
+    
+    star.style.left = `${startX}px`;
+    star.style.top = `${startY}px`;
+    
+    // Random duration and angle
+    const duration = Math.random() * 1.2 + 0.8;
+    const angle = 20 + Math.random() * 25;
+    star.style.animationDuration = `${duration}s`;
+    star.style.transform = `rotate(${angle}deg)`;
+    
+    container.appendChild(star);
+    
+    // Remove after animation
+    setTimeout(() => {
+        star.remove();
+    }, duration * 1000 + 100);
+}
+
+// Spawn shooting stars periodically
+setInterval(() => {
+    if (Math.random() > 0.4) {           // ~60% chance every interval
+        createShootingStar();
+    }
+}, 650);
+
+// Initial stars
+createStars(180);
+
+// Car animation
+function animate() {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+
+    cars.forEach((car) => {
+        car.angle += car.speed;
+
+        const x = cx + Math.cos(car.angle * 1.3) * car.radius + Math.sin(car.angle * 4) * 90;
+        const y = cy + Math.sin(car.angle * 1.1) * (car.radius * 0.6) + Math.cos(car.angle * 3) * 110;
+
+        car.el.style.left = `${x - 80}px`;
+        car.el.style.top = `${y - 60}px`;
+        car.el.style.transform = `rotate(${Math.sin(car.angle) * 25}deg)`;
+    });
+
+    requestAnimationFrame(animate);
+}
+
+animate();
+
+// Click sounds
+cars.forEach((car, i) => {
+    car.el.addEventListener('click', () => {
+        const sounds = document.querySelectorAll('audio');
+        sounds[i % sounds.length].currentTime = 0;
+        sounds[i % sounds.length].play();
+
+        car.el.style.transform += ' scale(1.4)';
+        setTimeout(() => {
+            car.el.style.transform = car.el.style.transform.replace(' scale(1.4)', '');
+        }, 180);
+    });
+});
+</script>
+
+</body>
+</html>
