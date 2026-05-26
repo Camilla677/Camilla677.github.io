@@ -1,0 +1,305 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef, useState, useCallback } from "react";
+
+export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Y2K Space Runner" },
+      { name: "description", content: "Neon synthwave endless runner. Jump the wreckage. Chase the high score." },
+    ],
+  }),
+  component: Index,
+});
+
+type Obstacle = { id: number; x: number; type: "fence" | "wrecked-car" | "barrier" };
+
+const GROUND_OFFSET = 48;
+const JUMP_VELOCITY = 16;
+const GRAVITY = 0.7;
+const BASE_SPEED = 7;
+
+function Index() {
+  const [stars] = useState(() =>
+    Array.from({ length: 90 }, () => ({
+      top: Math.random() * 100,
+      left: Math.random() * 100,
+      size: Math.random() * 2 + 1,
+      delay: Math.random() * 3,
+    })),
+  );
+  const [shooters, setShooters] = useState<{ id: number; top: number; duration: number }[]>([]);
+
+  const [carY, setCarY] = useState(0);
+  const carYRef = useRef(0);
+  const velRef = useRef(0);
+  const jumpingRef = useRef(false);
+
+  const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const obstaclesRef = useRef<Obstacle[]>([]);
+  const nextIdRef = useRef(1);
+  const lastSpawnRef = useRef(0);
+  const nextSpawnRef = useRef(90);
+
+  const [score, setScore] = useState(0);
+  const scoreRef = useRef(0);
+  const [best, setBest] = useState(0);
+  const [running, setRunning] = useState(true);
+  const runningRef = useRef(true);
+  const [started, setStarted] = useState(false);
+
+  const widthRef = useRef(typeof window !== "undefined" ? window.innerWidth : 1200);
+
+  // shooting stars
+  useEffect(() => {
+    let id = 0;
+    const spawn = () => {
+      const s = { id: id++, top: Math.random() * 60, duration: 1.5 + Math.random() * 1.5 };
+      setShooters((prev) => [...prev, s]);
+      setTimeout(() => setShooters((prev) => prev.filter((x) => x.id !== s.id)), s.duration * 1000);
+    };
+    const i = setInterval(spawn, 1800);
+    return () => clearInterval(i);
+  }, []);
+
+  // resize
+  useEffect(() => {
+    const onResize = () => (widthRef.current = window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const jump = useCallback(() => {
+    if (!runningRef.current) return;
+    if (jumpingRef.current) return;
+    jumpingRef.current = true;
+    velRef.current = JUMP_VELOCITY;
+    if (!started) setStarted(true);
+  }, [started]);
+
+  const reset = useCallback(() => {
+    setObstacles([]);
+    obstaclesRef.current = [];
+    setScore(0);
+    scoreRef.current = 0;
+    carYRef.current = 0;
+    setCarY(0);
+    velRef.current = 0;
+    jumpingRef.current = false;
+    lastSpawnRef.current = 0;
+    nextSpawnRef.current = 90;
+    runningRef.current = true;
+    setRunning(true);
+    setStarted(false);
+  }, []);
+
+  // input
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "ArrowUp") {
+        e.preventDefault();
+        if (!runningRef.current) reset();
+        else jump();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [jump, reset]);
+
+  // game loop
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const loop = (t: number) => {
+      const dt = Math.min(32, t - last) / 16.67;
+      last = t;
+
+      if (runningRef.current && started) {
+        // physics
+        if (jumpingRef.current) {
+          velRef.current -= GRAVITY * dt;
+          carYRef.current += velRef.current * dt;
+          if (carYRef.current <= 0) {
+            carYRef.current = 0;
+            velRef.current = 0;
+            jumpingRef.current = false;
+          }
+          setCarY(carYRef.current);
+        }
+
+        // gentle speed ramp — caps low, scales slowly
+        const speed = BASE_SPEED + Math.min(3, scoreRef.current / 800);
+
+        // spawn at random intervals
+        lastSpawnRef.current += dt;
+        if (lastSpawnRef.current > nextSpawnRef.current) {
+          lastSpawnRef.current = 0;
+          // random gap between ~70 and ~180 frames, shrinks slightly over time
+          const minGap = Math.max(55, 70 - scoreRef.current / 200);
+          const maxGap = Math.max(110, 180 - scoreRef.current / 100);
+          nextSpawnRef.current = minGap + Math.random() * (maxGap - minGap);
+          const types: Obstacle["type"][] = ["fence", "wrecked-car", "barrier"];
+          const type = types[Math.floor(Math.random() * types.length)];
+          const ob = { id: nextIdRef.current++, x: widthRef.current + 40, type };
+          obstaclesRef.current = [...obstaclesRef.current, ob];
+        }
+
+        // move
+        obstaclesRef.current = obstaclesRef.current
+          .map((o) => ({ ...o, x: o.x - speed * dt }))
+          .filter((o) => o.x > -120);
+        setObstacles(obstaclesRef.current);
+
+        // collision: car box ~ left 90, width 128, bottom 48 + carY, height ~64
+        const carLeft = 90;
+        const carRight = 90 + 128;
+        const carBottom = GROUND_OFFSET + carYRef.current;
+        const carTop = carBottom + 64;
+
+        for (const o of obstaclesRef.current) {
+          const sizes = {
+            fence: { w: 20, h: 68 },
+            "wrecked-car": { w: 52, h: 38 },
+            barrier: { w: 38, h: 52 },
+          }[o.type];
+          const oLeft = o.x;
+          const oRight = o.x + sizes.w;
+          const oBottom = 55;
+          const oTop = oBottom + sizes.h;
+          const overlapX = carRight - 16 > oLeft && carLeft + 16 < oRight;
+          const overlapY = carBottom < oTop && carTop > oBottom;
+          if (overlapX && overlapY) {
+            runningRef.current = false;
+            setRunning(false);
+            setBest((b) => Math.max(b, Math.floor(scoreRef.current)));
+            break;
+          }
+        }
+
+        scoreRef.current += dt * 0.8;
+        setScore(Math.floor(scoreRef.current));
+      }
+
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [started]);
+
+  return (
+    <main
+      className="y2k-root"
+      onClick={() => (running ? jump() : reset())}
+      role="application"
+      aria-label="Y2K Space Runner game"
+    >
+      <h1 className="sr-only">Y2K Space Runner</h1>
+
+      {/* stars */}
+      <div className="y2k-stars">
+        {stars.map((s, i) => (
+          <span
+            key={i}
+            className="y2k-star"
+            style={{
+              top: `${s.top}%`,
+              left: `${s.left}%`,
+              width: s.size,
+              height: s.size,
+              animationDelay: `${s.delay}s`,
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="y2k-shooting-stars">
+        {shooters.map((s) => (
+          <span
+            key={s.id}
+            className="y2k-shooting-star"
+            style={{ top: `${s.top}%`, left: "-150px", animationDuration: `${s.duration}s` }}
+          />
+        ))}
+      </div>
+
+      {/* sun */}
+      <div className="y2k-sun" aria-hidden />
+      {/* grid */}
+      <div className="y2k-grid" aria-hidden />
+
+      {/* HUD */}
+      <div className="y2k-hud">
+        <div className="y2k-hud-block">
+          <span className="y2k-hud-label">SCORE</span>
+          <span className="y2k-hud-value">{String(score).padStart(5, "0")}</span>
+        </div>
+        <div className="y2k-title">Y2K · SPACE RUNNER</div>
+        <div className="y2k-hud-block y2k-hud-right">
+          <span className="y2k-hud-label">BEST</span>
+          <span className="y2k-hud-value">{String(best).padStart(5, "0")}</span>
+        </div>
+      </div>
+
+      {/* ground */}
+      <div className="ground" />
+
+      {/* obstacles */}
+      {obstacles.map((o) => (
+        <div key={o.id} className={`obstacle ${o.type}`} style={{ left: o.x }} />
+      ))}
+
+      {/* car */}
+      <div className="y2k-car" style={{ transform: `translateY(${-carY}px)` }} aria-label="player car">
+        <svg viewBox="0 0 128 64" width="128" height="64">
+          <defs>
+            <linearGradient id="body" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#ff3df7" />
+              <stop offset="100%" stopColor="#7a00ff" />
+            </linearGradient>
+            <linearGradient id="glass" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#00ffff" />
+              <stop offset="100%" stopColor="#0044ff" />
+            </linearGradient>
+          </defs>
+          {/* body */}
+          <path
+            d="M6,46 L18,28 L40,18 L92,18 L112,30 L122,46 L122,52 L6,52 Z"
+            fill="url(#body)"
+            stroke="#fff"
+            strokeWidth="1.5"
+          />
+          {/* windshield */}
+          <path d="M30,30 L46,22 L86,22 L100,32 Z" fill="url(#glass)" stroke="#fff" strokeWidth="1" />
+          {/* stripe */}
+          <rect x="6" y="40" width="116" height="3" fill="#ffff00" />
+          {/* headlight */}
+          <circle cx="116" cy="38" r="3" fill="#ffff66" />
+          {/* wheels */}
+          <circle cx="32" cy="54" r="8" fill="#000" stroke="#00ffff" strokeWidth="2" />
+          <circle cx="96" cy="54" r="8" fill="#000" stroke="#00ffff" strokeWidth="2" />
+          <circle cx="32" cy="54" r="3" fill="#ff00ff" />
+          <circle cx="96" cy="54" r="3" fill="#ff00ff" />
+        </svg>
+      </div>
+
+      {/* overlays */}
+      {!started && running && (
+        <div className="y2k-overlay">
+          <div className="y2k-overlay-card">
+            <div className="y2k-overlay-title">READY?</div>
+            <div className="y2k-overlay-sub">TAP / SPACE TO JUMP</div>
+          </div>
+        </div>
+      )}
+
+      {!running && (
+        <div className="y2k-overlay">
+          <div className="y2k-overlay-card">
+            <div className="y2k-overlay-title y2k-game-over">GAME OVER</div>
+            <div className="y2k-overlay-sub">SCORE {score} · BEST {best}</div>
+            <div className="y2k-overlay-sub y2k-blink">TAP / SPACE TO RESTART</div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
