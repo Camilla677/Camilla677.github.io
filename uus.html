@@ -1,0 +1,675 @@
+import { Link } from 'react-router-dom';
+
+const GAMES = [
+  {
+    path: '/space-runner',
+    title: 'Y2K Space Runner',
+    emoji: '🚗',
+    description: 'Dodge obstacles in a neon cyberpunk world. How far can you go?',
+    color: '#ff00ff',
+    glow: '#ff00ff',
+    keys: 'SPACE / TAP — jump',
+  },
+  {
+    path: '/snake',
+    title: 'Y2K Snake',
+    emoji: '🐍',
+    description: 'Eat the glowing pixels and grow without hitting yourself.',
+    color: '#00ffff',
+    glow: '#00ffff',
+    keys: 'Arrow keys / WASD',
+  },
+  {
+    path: '/pong',
+    title: 'Cyber Pong',
+    emoji: '🏓',
+    description: 'Classic pong against an AI opponent. First to 7 wins.',
+    color: '#ffff00',
+    glow: '#ffff00',
+    keys: 'W/S or Arrow Up/Down',
+  },
+];
+
+export default function GameSelect() {
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center justify-center p-6"
+      style={{
+        background: 'radial-gradient(ellipse at 50% 30%, #2a004d 0%, #0a0014 60%, #000005 100%)',
+        fontFamily: 'monospace',
+      }}
+    >
+      {/* Title */}
+      <div className="text-center mb-12">
+        <div style={{ fontSize: 48, marginBottom: 8 }}>👾</div>
+        <h1 style={{
+          fontSize: 'clamp(28px, 6vw, 52px)',
+          fontWeight: 'bold',
+          color: '#ff00ff',
+          textShadow: '0 0 24px #ff00ff, 0 0 60px #ff00ff44',
+          letterSpacing: 4,
+          marginBottom: 10,
+        }}>
+          Y2K ARCADE
+        </h1>
+        <p style={{ color: '#00ffff', fontSize: 14, letterSpacing: 2, opacity: 0.7 }}>
+          SELECT YOUR GAME
+        </p>
+      </div>
+
+      {/* Game cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
+        {GAMES.map(g => (
+          <Link
+            key={g.path}
+            to={g.path}
+            className="block no-underline"
+            style={{ textDecoration: 'none' }}
+          >
+            <div
+              style={{
+                background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
+                border: `2px solid ${g.color}`,
+                boxShadow: `0 0 20px ${g.glow}55, 0 0 50px ${g.glow}22`,
+                borderRadius: 16,
+                padding: '32px 24px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'transform 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.transform = 'scale(1.04)';
+                e.currentTarget.style.boxShadow = `0 0 36px ${g.glow}99, 0 0 80px ${g.glow}44`;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.boxShadow = `0 0 20px ${g.glow}55, 0 0 50px ${g.glow}22`;
+              }}
+            >
+              <div style={{ fontSize: 52, marginBottom: 12 }}>{g.emoji}</div>
+              <div style={{
+                fontSize: 18,
+                fontWeight: 'bold',
+                color: g.color,
+                textShadow: `0 0 10px ${g.color}`,
+                letterSpacing: 2,
+                marginBottom: 10,
+              }}>
+                {g.title}
+              </div>
+              <p style={{ fontSize: 13, color: '#cccccc', lineHeight: 1.6, marginBottom: 16 }}>
+                {g.description}
+              </p>
+              <div style={{
+                display: 'inline-block',
+                fontSize: 11,
+                color: g.color,
+                border: `1px solid ${g.color}55`,
+                borderRadius: 4,
+                padding: '3px 10px',
+                opacity: 0.8,
+              }}>
+                {g.keys}
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      <p style={{ color: '#ffffff22', fontSize: 11, marginTop: 40, letterSpacing: 1 }}>
+        Y2K ARCADE © 2000 — ALL RIGHTS RESERVED
+      </p>
+    </div>
+  );
+}
+
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+
+const CELL = 20;
+const COLS = 25;
+const ROWS = 20;
+
+function getRand(max) { return Math.floor(Math.random() * max); }
+function newFood(snake) {
+  let pos;
+  do { pos = { x: getRand(COLS), y: getRand(ROWS) }; }
+  while (snake.some(s => s.x === pos.x && s.y === pos.y));
+  return pos;
+}
+
+function getHighScores() {
+  try { return JSON.parse(localStorage.getItem('y2k_snake_scores') || '[]'); } catch { return []; }
+}
+function saveHighScore(score) {
+  const scores = getHighScores();
+  scores.push(score);
+  scores.sort((a, b) => b - a);
+  const top5 = scores.slice(0, 5);
+  localStorage.setItem('y2k_snake_scores', JSON.stringify(top5));
+  return top5;
+}
+
+export default function Snake() {
+  const canvasRef = useRef(null);
+  const stateRef = useRef(null);
+  const animRef = useRef(null);
+  const lastTickRef = useRef(0);
+  const [gameOverScreen, setGameOverScreen] = useState(null);
+  const showGameOverRef = useRef(null);
+
+  const initState = useCallback(() => {
+    const snake = [{ x: 12, y: 10 }, { x: 11, y: 10 }, { x: 10, y: 10 }];
+    return {
+      snake,
+      dir: { x: 1, y: 0 },
+      nextDir: { x: 1, y: 0 },
+      food: newFood(snake),
+      score: 0,
+      gameOver: false,
+      scored: false,
+      particles: [],
+    };
+  }, []);
+
+  const restart = useCallback(() => {
+    stateRef.current = initState();
+    lastTickRef.current = 0;
+    setGameOverScreen(null);
+  }, [initState]);
+
+  useEffect(() => {
+    stateRef.current = initState();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    canvas.width = COLS * CELL;
+    canvas.height = ROWS * CELL;
+
+    const handleKey = (e) => {
+      const gs = stateRef.current;
+      if (gs.gameOver) { restart(); return; }
+      const map = {
+        ArrowUp: { x: 0, y: -1 }, w: { x: 0, y: -1 }, W: { x: 0, y: -1 },
+        ArrowDown: { x: 0, y: 1 }, s: { x: 0, y: 1 }, S: { x: 0, y: 1 },
+        ArrowLeft: { x: -1, y: 0 }, a: { x: -1, y: 0 }, A: { x: -1, y: 0 },
+        ArrowRight: { x: 1, y: 0 }, d: { x: 1, y: 0 }, D: { x: 1, y: 0 },
+      };
+      const nd = map[e.key];
+      if (nd && !(nd.x === -gs.dir.x && nd.y === -gs.dir.y)) {
+        gs.nextDir = nd;
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    function getSpeed(score) { return Math.max(60, 160 - score * 4); }
+
+    function loop(time) {
+      const gs = stateRef.current;
+      const speed = getSpeed(gs.score);
+
+      if (!gs.gameOver && time - lastTickRef.current > speed) {
+        lastTickRef.current = time;
+        gs.dir = gs.nextDir;
+
+        const head = { x: gs.snake[0].x + gs.dir.x, y: gs.snake[0].y + gs.dir.y };
+        // Wall wrap
+        head.x = (head.x + COLS) % COLS;
+        head.y = (head.y + ROWS) % ROWS;
+
+        // Self collision
+        if (gs.snake.some(s => s.x === head.x && s.y === head.y)) {
+          if (!gs.scored) {
+            gs.scored = true;
+            const scores = saveHighScore(gs.score);
+            if (showGameOverRef.current) showGameOverRef.current({ score: gs.score, scores });
+          }
+          gs.gameOver = true;
+        } else {
+          gs.snake.unshift(head);
+          if (head.x === gs.food.x && head.y === gs.food.y) {
+            gs.score++;
+            // burst particles
+            for (let i = 0; i < 10; i++) {
+              gs.particles.push({
+                x: gs.food.x * CELL + CELL / 2, y: gs.food.y * CELL + CELL / 2,
+                vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4,
+                life: 1, color: `hsl(${Math.random() * 360}, 100%, 70%)`,
+              });
+            }
+            gs.food = newFood(gs.snake);
+          } else {
+            gs.snake.pop();
+          }
+        }
+      }
+
+      // Draw background
+      ctx.fillStyle = '#05000f';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = 'rgba(255,0,255,0.06)';
+      ctx.lineWidth = 0.5;
+      for (let x = 0; x < COLS; x++) {
+        ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < ROWS; y++) {
+        ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(canvas.width, y * CELL); ctx.stroke();
+      }
+
+      // Particles
+      gs.particles = gs.particles.filter(p => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+        if (p.life <= 0) return false;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 6;
+        ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+        return true;
+      });
+
+      // Food
+      const fx = gs.food.x * CELL + CELL / 2, fy = gs.food.y * CELL + CELL / 2;
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = '#ff00ff';
+      ctx.beginPath();
+      ctx.arc(fx, fy, CELL / 2 - 3 + Math.sin(time / 300) * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Snake
+      gs.snake.forEach((seg, i) => {
+        const t = i / gs.snake.length;
+        ctx.fillStyle = i === 0 ? '#00ffff' : `hsl(${160 + t * 80}, 100%, ${55 - t * 20}%)`;
+        ctx.shadowColor = i === 0 ? '#00ffff' : '#00ff88';
+        ctx.shadowBlur = i === 0 ? 14 : 6;
+        const pad = i === 0 ? 1 : 2;
+        ctx.fillRect(seg.x * CELL + pad, seg.y * CELL + pad, CELL - pad * 2, CELL - pad * 2);
+        // eyes on head
+        if (i === 0) {
+          ctx.fillStyle = '#000';
+          ctx.shadowBlur = 0;
+          const ex = gs.dir.x, ey = gs.dir.y;
+          const cx = seg.x * CELL + CELL / 2, cy = seg.y * CELL + CELL / 2;
+          ctx.fillRect(cx + ex * 4 + ey * 3 - 2, cy + ey * 4 - ex * 3 - 2, 4, 4);
+          ctx.fillRect(cx + ex * 4 - ey * 3 - 2, cy + ey * 4 + ex * 3 - 2, 4, 4);
+        }
+      });
+      ctx.shadowBlur = 0;
+
+      // HUD
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 10;
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`SCORE: ${gs.score}`, 10, 22);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.fillText(`SPEED: ${Math.round((160 - getSpeed(gs.score)) / 100 * 10) / 10}x`, canvas.width - 10, 22);
+      ctx.shadowBlur = 0;
+
+      if (gs.gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      animRef.current = requestAnimationFrame(loop);
+    }
+
+    showGameOverRef.current = setGameOverScreen;
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [initState, restart]);
+
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center" style={{ background: '#05000f' }}>
+      <Link to="/" style={{ position: 'absolute', top: 16, left: 20, color: '#ff00ff', fontFamily: 'monospace', fontSize: 13, textDecoration: 'none', letterSpacing: 1, opacity: 0.7 }}>
+        ← ARCADE
+      </Link>
+      <div style={{ position: 'relative', border: '2px solid #ff00ff', boxShadow: '0 0 30px #ff00ff55' }}>
+        <canvas ref={canvasRef} style={{ display: 'block' }} />
+
+        {gameOverScreen && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+            <div style={{
+              background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
+              border: '2px solid #ff00ff',
+              boxShadow: '0 0 40px #ff00ff88',
+              borderRadius: 14,
+              padding: '28px 36px',
+              textAlign: 'center',
+              fontFamily: 'monospace',
+              minWidth: 260,
+            }}>
+              <div style={{ fontSize: 36, marginBottom: 4 }}>💀</div>
+              <div style={{ fontSize: 26, fontWeight: 'bold', color: '#ff00ff', textShadow: '0 0 12px #ff00ff', marginBottom: 6 }}>GAME OVER</div>
+              <div style={{ fontSize: 16, color: '#00ffff', marginBottom: 16 }}>Score: <strong>{gameOverScreen.score}</strong></div>
+              <div style={{ borderTop: '1px solid #ff00ff44', paddingTop: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: '#ff00ff', letterSpacing: 2, marginBottom: 8 }}>🏆 TOP 5</div>
+                {gameOverScreen.scores.map((s, i) => {
+                  const medals = ['🥇','🥈','🥉','4.','5.'];
+                  const isNew = i === 0 && gameOverScreen.score === s;
+                  return <div key={i} style={{ fontSize: 13, color: isNew ? '#ffff00' : i === 0 ? '#ffd700' : '#aaa', marginBottom: 3, fontWeight: isNew ? 'bold' : 'normal' }}>{medals[i]} {s}{isNew ? ' ◀ YOU' : ''}</div>;
+                })}
+              </div>
+              <button onClick={restart} style={{ background: '#ff00ff', color: '#000', border: 'none', borderRadius: 8, padding: '10px 28px', fontSize: 14, fontWeight: 'bold', fontFamily: 'monospace', cursor: 'pointer', letterSpacing: 2, boxShadow: '0 0 14px #ff00ff' }}>
+                ▶ PLAY AGAIN
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+
+const W = 800, H = 500;
+const PADDLE_W = 12, PADDLE_H = 80;
+const BALL_R = 8;
+const WIN_SCORE = 7;
+const AI_SPEED = 4;
+
+export default function Pong() {
+  const canvasRef = useRef(null);
+  const stateRef = useRef(null);
+  const animRef = useRef(null);
+  const keysRef = useRef({});
+  const [winner, setWinner] = useState(null);
+  const winnerRef = useRef(null);
+
+  const initState = useCallback(() => ({
+    ball: { x: W / 2, y: H / 2, vx: (Math.random() > 0.5 ? 1 : -1) * 5, vy: (Math.random() - 0.5) * 6 },
+    player: { y: H / 2 - PADDLE_H / 2 },
+    ai: { y: H / 2 - PADDLE_H / 2 },
+    scoreP: 0, scoreAI: 0,
+    over: false,
+    particles: [],
+  }), []);
+
+  const restart = useCallback(() => {
+    stateRef.current = initState();
+    setWinner(null);
+  }, [initState]);
+
+  useEffect(() => {
+    stateRef.current = initState();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    canvas.width = W;
+    canvas.height = H;
+
+    const onKey = (e) => { keysRef.current[e.code] = e.type === 'keydown'; };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+
+    function resetBall(gs, dir) {
+      gs.ball = { x: W / 2, y: H / 2, vx: dir * (4.5 + Math.random()), vy: (Math.random() - 0.5) * 6 };
+    }
+
+    function burst(gs, x, y, color) {
+      for (let i = 0; i < 12; i++) {
+        gs.particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, color });
+      }
+    }
+
+    let lastTime = performance.now();
+    function loop(time) {
+      const gs = stateRef.current;
+      const dt = Math.min((time - lastTime) / 16.67, 2);
+      lastTime = time;
+
+      if (!gs.over) {
+        // Player input
+        const speed = 6;
+        if (keysRef.current['ArrowUp'] || keysRef.current['KeyW']) gs.player.y -= speed * dt;
+        if (keysRef.current['ArrowDown'] || keysRef.current['KeyS']) gs.player.y += speed * dt;
+        gs.player.y = Math.max(0, Math.min(H - PADDLE_H, gs.player.y));
+
+        // AI
+        const aiCenter = gs.ai.y + PADDLE_H / 2;
+        if (aiCenter < gs.ball.y - 10) gs.ai.y += AI_SPEED * dt;
+        else if (aiCenter > gs.ball.y + 10) gs.ai.y -= AI_SPEED * dt;
+        gs.ai.y = Math.max(0, Math.min(H - PADDLE_H, gs.ai.y));
+
+        // Ball
+        gs.ball.x += gs.ball.vx * dt;
+        gs.ball.y += gs.ball.vy * dt;
+
+        // Top/bottom bounce
+        if (gs.ball.y - BALL_R < 0) { gs.ball.y = BALL_R; gs.ball.vy *= -1; }
+        if (gs.ball.y + BALL_R > H) { gs.ball.y = H - BALL_R; gs.ball.vy *= -1; }
+
+        // Player paddle (left)
+        const px = 20;
+        if (gs.ball.vx < 0 && gs.ball.x - BALL_R < px + PADDLE_W && gs.ball.x + BALL_R > px &&
+            gs.ball.y > gs.player.y && gs.ball.y < gs.player.y + PADDLE_H) {
+          gs.ball.x = px + PADDLE_W + BALL_R;
+          const rel = (gs.ball.y - (gs.player.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+          gs.ball.vy = rel * 7;
+          gs.ball.vx = Math.abs(gs.ball.vx) * 1.05;
+          burst(gs, px + PADDLE_W, gs.ball.y, '#00ffff');
+        }
+
+        // AI paddle (right)
+        const ax = W - 20 - PADDLE_W;
+        if (gs.ball.vx > 0 && gs.ball.x + BALL_R > ax && gs.ball.x - BALL_R < ax + PADDLE_W &&
+            gs.ball.y > gs.ai.y && gs.ball.y < gs.ai.y + PADDLE_H) {
+          gs.ball.x = ax - BALL_R;
+          const rel = (gs.ball.y - (gs.ai.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+          gs.ball.vy = rel * 7;
+          gs.ball.vx = -Math.abs(gs.ball.vx) * 1.05;
+          burst(gs, ax, gs.ball.y, '#ff00ff');
+        }
+
+        // Scoring
+        if (gs.ball.x < 0) {
+          gs.scoreAI++;
+          burst(gs, 0, gs.ball.y, '#ff0000');
+          if (gs.scoreAI >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('AI'); }
+          else resetBall(gs, 1);
+        }
+        if (gs.ball.x > W) {
+          gs.scoreP++;
+          burst(gs, W, gs.ball.y, '#00ff00');
+          if (gs.scoreP >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('YOU'); }
+          else resetBall(gs, -1);
+        }
+      }
+
+      // Draw background
+      ctx.fillStyle = '#05000f';
+      ctx.fillRect(0, 0, W, H);
+
+      // Center dashed line
+      ctx.setLineDash([10, 14]);
+      ctx.strokeStyle = 'rgba(255,0,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Particles
+      gs.particles = gs.particles.filter(p => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+        if (p.life <= 0) return false;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 4 * p.life, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        return true;
+      });
+
+      // Player paddle
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 18;
+      ctx.fillRect(20, gs.player.y, PADDLE_W, PADDLE_H);
+
+      // AI paddle
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.fillRect(W - 20 - PADDLE_W, gs.ai.y, PADDLE_W, PADDLE_H);
+
+      // Ball
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(gs.ball.x, gs.ball.y, BALL_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Scores
+      ctx.font = 'bold 48px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 14;
+      ctx.fillText(gs.scoreP, W / 2 - 80, 60);
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.fillText(gs.scoreAI, W / 2 + 80, 60);
+      ctx.shadowBlur = 0;
+
+      // Labels
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#00ffff88';
+      ctx.fillText('YOU', W / 2 - 80, 78);
+      ctx.fillStyle = '#ff00ff88';
+      ctx.fillText('AI', W / 2 + 80, 78);
+
+      if (gs.over) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      animRef.current = requestAnimationFrame(loop);
+    }
+
+    winnerRef.current = setWinner;
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [initState]);
+
+  const winColor = winner === 'YOU' ? '#00ffff' : '#ff00ff';
+
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center" style={{ background: '#05000f' }}>
+      <Link to="/" style={{ position: 'absolute', top: 16, left: 20, color: '#ffff00', fontFamily: 'monospace', fontSize: 13, textDecoration: 'none', letterSpacing: 1, opacity: 0.7 }}>
+        ← ARCADE
+      </Link>
+      <div style={{ position: 'relative', border: '2px solid #ffff00', boxShadow: '0 0 30px #ffff0055', maxWidth: '100%', overflow: 'hidden' }}>
+        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%' }} />
+
+        {winner && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+            <div style={{
+              background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
+              border: `2px solid ${winColor}`,
+              boxShadow: `0 0 40px ${winColor}88`,
+              borderRadius: 14,
+              padding: '32px 44px',
+              textAlign: 'center',
+              fontFamily: 'monospace',
+            }}>
+              <div style={{ fontSize: 44, marginBottom: 8 }}>{winner === 'YOU' ? '🏆' : '🤖'}</div>
+              <div style={{ fontSize: 28, fontWeight: 'bold', color: winColor, textShadow: `0 0 16px ${winColor}`, letterSpacing: 2, marginBottom: 8 }}>
+                {winner === 'YOU' ? 'YOU WIN!' : 'AI WINS!'}
+              </div>
+              <p style={{ color: '#ccc', fontSize: 13, marginBottom: 20 }}>
+                {winner === 'YOU' ? 'Impressive moves, human.' : 'The machine is superior. Try again.'}
+              </p>
+              <button onClick={restart} style={{ background: winColor, color: '#000', border: 'none', borderRadius: 8, padding: '10px 28px', fontSize: 14, fontWeight: 'bold', fontFamily: 'monospace', cursor: 'pointer', letterSpacing: 2, boxShadow: `0 0 14px ${winColor}` }}>
+                ▶ PLAY AGAIN
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ color: '#ffffff33', fontFamily: 'monospace', fontSize: 11, marginTop: 12 }}>W/S or ↑↓ to move · First to {WIN_SCORE} wins</div>
+    </div>
+  );
+}
+
+import { Toaster } from "@/components/ui/toaster"
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClientInstance } from '@/lib/query-client'
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import PageNotFound from './lib/PageNotFound';
+import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+// Add page imports here
+import GameSelect from './pages/GameSelect';
+import Game from './pages/Game';
+import Snake from './pages/Snake';
+import Pong from './pages/Pong';
+
+const AuthenticatedApp = () => {
+  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+
+  // Show loading spinner while checking app public settings or auth
+  if (isLoadingPublicSettings || isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // Handle authentication errors
+  if (authError) {
+    if (authError.type === 'user_not_registered') {
+      return <UserNotRegisteredError />;
+    } else if (authError.type === 'auth_required') {
+      // Redirect to login automatically
+      navigateToLogin();
+      return null;
+    }
+  }
+
+  // Render the main app
+  return (
+    <Routes>
+      <Route path="/" element={<GameSelect />} />
+      <Route path="/space-runner" element={<Game />} />
+      <Route path="/snake" element={<Snake />} />
+      <Route path="/pong" element={<Pong />} />
+      <Route path="*" element={<PageNotFound />} />
+    </Routes>
+  );
+};
+
+
+function App() {
+
+  return (
+    <AuthProvider>
+      <QueryClientProvider client={queryClientInstance}>
+        <Router>
+          <AuthenticatedApp />
+        </Router>
+        <Toaster />
+      </QueryClientProvider>
+    </AuthProvider>
+  )
+}
+
+export default App
