@@ -1,0 +1,37 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Y2K Arcade" },
+      { name: "description", content: "Pick your neon synthwave arcade game." },
+    ],
+  }),
+  component: GameSelect,
+});
+const GAMES = [
+  { to: "/space-runner", title: "SPACE RUNNER", sub: "Jump the wreckage", emoji: "🚗" },
+  { to: "/snake", title: "NEON SNAKE", sub: "Eat. Grow. Survive.", emoji: "🐍" },
+  { to: "/pong", title: "RETRO PONG", sub: "First to 5 wins", emoji: "🏓" },
+] as const;
+function GameSelect() {
+  return (
+    <main className="y2k-root" style={{ cursor: "default" }}>
+      <h1 className="sr-only">Y2K Arcade</h1>
+      <div className="y2k-sun" aria-hidden />
+      <div className="y2k-grid" aria-hidden />
+      <div className="y2k-select">
+        <div className="y2k-select-title">Y2K · ARCADE</div>
+        <div className="y2k-select-sub">SELECT YOUR GAME</div>
+        <div className="y2k-select-grid">
+          {GAMES.map((g) => (
+            <Link key={g.to} to={g.to} className="y2k-game-card">
+              <div className="y2k-game-emoji">{g.emoji}</div>
+              <div className="y2k-game-title">{g.title}</div>
+              <div className="y2k-game-sub">{g.sub}</div>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+}
