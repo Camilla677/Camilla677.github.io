@@ -1,1 +1,235 @@
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 
+const W = 800, H = 500;
+const PADDLE_W = 12, PADDLE_H = 80;
+const BALL_R = 8;
+const WIN_SCORE = 7;
+const AI_SPEED = 4;
+
+export default function Pong() {
+  const canvasRef = useRef(null);
+  const stateRef = useRef(null);
+  const animRef = useRef(null);
+  const keysRef = useRef({});
+  const [winner, setWinner] = useState(null);
+  const winnerRef = useRef(null);
+
+  const initState = useCallback(() => ({
+    ball: { x: W / 2, y: H / 2, vx: (Math.random() > 0.5 ? 1 : -1) * 5, vy: (Math.random() - 0.5) * 6 },
+    player: { y: H / 2 - PADDLE_H / 2 },
+    ai: { y: H / 2 - PADDLE_H / 2 },
+    scoreP: 0, scoreAI: 0,
+    over: false,
+    particles: [],
+  }), []);
+
+  const restart = useCallback(() => {
+    stateRef.current = initState();
+    setWinner(null);
+  }, [initState]);
+
+  useEffect(() => {
+    stateRef.current = initState();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    canvas.width = W;
+    canvas.height = H;
+
+    const onKey = (e) => { keysRef.current[e.code] = e.type === 'keydown'; };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+
+    function resetBall(gs, dir) {
+      gs.ball = { x: W / 2, y: H / 2, vx: dir * (4.5 + Math.random()), vy: (Math.random() - 0.5) * 6 };
+    }
+
+    function burst(gs, x, y, color) {
+      for (let i = 0; i < 12; i++) {
+        gs.particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, color });
+      }
+    }
+
+    let lastTime = performance.now();
+    function loop(time) {
+      const gs = stateRef.current;
+      const dt = Math.min((time - lastTime) / 16.67, 2);
+      lastTime = time;
+
+      if (!gs.over) {
+        // Player input
+        const speed = 6;
+        if (keysRef.current['ArrowUp'] || keysRef.current['KeyW']) gs.player.y -= speed * dt;
+        if (keysRef.current['ArrowDown'] || keysRef.current['KeyS']) gs.player.y += speed * dt;
+        gs.player.y = Math.max(0, Math.min(H - PADDLE_H, gs.player.y));
+
+        // AI
+        const aiCenter = gs.ai.y + PADDLE_H / 2;
+        if (aiCenter < gs.ball.y - 10) gs.ai.y += AI_SPEED * dt;
+        else if (aiCenter > gs.ball.y + 10) gs.ai.y -= AI_SPEED * dt;
+        gs.ai.y = Math.max(0, Math.min(H - PADDLE_H, gs.ai.y));
+
+        // Ball
+        gs.ball.x += gs.ball.vx * dt;
+        gs.ball.y += gs.ball.vy * dt;
+
+        // Top/bottom bounce
+        if (gs.ball.y - BALL_R < 0) { gs.ball.y = BALL_R; gs.ball.vy *= -1; }
+        if (gs.ball.y + BALL_R > H) { gs.ball.y = H - BALL_R; gs.ball.vy *= -1; }
+
+        // Player paddle (left)
+        const px = 20;
+        if (gs.ball.vx < 0 && gs.ball.x - BALL_R < px + PADDLE_W && gs.ball.x + BALL_R > px &&
+            gs.ball.y > gs.player.y && gs.ball.y < gs.player.y + PADDLE_H) {
+          gs.ball.x = px + PADDLE_W + BALL_R;
+          const rel = (gs.ball.y - (gs.player.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+          gs.ball.vy = rel * 7;
+          gs.ball.vx = Math.abs(gs.ball.vx) * 1.05;
+          burst(gs, px + PADDLE_W, gs.ball.y, '#00ffff');
+        }
+
+        // AI paddle (right)
+        const ax = W - 20 - PADDLE_W;
+        if (gs.ball.vx > 0 && gs.ball.x + BALL_R > ax && gs.ball.x - BALL_R < ax + PADDLE_W &&
+            gs.ball.y > gs.ai.y && gs.ball.y < gs.ai.y + PADDLE_H) {
+          gs.ball.x = ax - BALL_R;
+          const rel = (gs.ball.y - (gs.ai.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+          gs.ball.vy = rel * 7;
+          gs.ball.vx = -Math.abs(gs.ball.vx) * 1.05;
+          burst(gs, ax, gs.ball.y, '#ff00ff');
+        }
+
+        // Scoring
+        if (gs.ball.x < 0) {
+          gs.scoreAI++;
+          burst(gs, 0, gs.ball.y, '#ff0000');
+          if (gs.scoreAI >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('AI'); }
+          else resetBall(gs, 1);
+        }
+        if (gs.ball.x > W) {
+          gs.scoreP++;
+          burst(gs, W, gs.ball.y, '#00ff00');
+          if (gs.scoreP >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('YOU'); }
+          else resetBall(gs, -1);
+        }
+      }
+
+      // Draw background
+      ctx.fillStyle = '#05000f';
+      ctx.fillRect(0, 0, W, H);
+
+      // Center dashed line
+      ctx.setLineDash([10, 14]);
+      ctx.strokeStyle = 'rgba(255,0,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Particles
+      gs.particles = gs.particles.filter(p => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+        if (p.life <= 0) return false;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 4 * p.life, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        return true;
+      });
+
+      // Player paddle
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 18;
+      ctx.fillRect(20, gs.player.y, PADDLE_W, PADDLE_H);
+
+      // AI paddle
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.fillRect(W - 20 - PADDLE_W, gs.ai.y, PADDLE_W, PADDLE_H);
+
+      // Ball
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(gs.ball.x, gs.ball.y, BALL_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Scores
+      ctx.font = 'bold 48px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 14;
+      ctx.fillText(gs.scoreP, W / 2 - 80, 60);
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.fillText(gs.scoreAI, W / 2 + 80, 60);
+      ctx.shadowBlur = 0;
+
+      // Labels
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#00ffff88';
+      ctx.fillText('YOU', W / 2 - 80, 78);
+      ctx.fillStyle = '#ff00ff88';
+      ctx.fillText('AI', W / 2 + 80, 78);
+
+      if (gs.over) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      animRef.current = requestAnimationFrame(loop);
+    }
+
+    winnerRef.current = setWinner;
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [initState]);
+
+  const winColor = winner === 'YOU' ? '#00ffff' : '#ff00ff';
+
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center" style={{ background: '#05000f' }}>
+      <Link to="/" style={{ position: 'absolute', top: 16, left: 20, color: '#ffff00', fontFamily: 'monospace', fontSize: 13, textDecoration: 'none', letterSpacing: 1, opacity: 0.7 }}>
+        ← ARCADE
+      </Link>
+      <div style={{ position: 'relative', border: '2px solid #ffff00', boxShadow: '0 0 30px #ffff0055', maxWidth: '100%', overflow: 'hidden' }}>
+        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%' }} />
+
+        {winner && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+            <div style={{
+              background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
+              border: `2px solid ${winColor}`,
+              boxShadow: `0 0 40px ${winColor}88`,
+              borderRadius: 14,
+              padding: '32px 44px',
+              textAlign: 'center',
+              fontFamily: 'monospace',
+            }}>
+              <div style={{ fontSize: 44, marginBottom: 8 }}>{winner === 'YOU' ? '🏆' : '🤖'}</div>
+              <div style={{ fontSize: 28, fontWeight: 'bold', color: winColor, textShadow: `0 0 16px ${winColor}`, letterSpacing: 2, marginBottom: 8 }}>
+                {winner === 'YOU' ? 'YOU WIN!' : 'AI WINS!'}
+              </div>
+              <p style={{ color: '#ccc', fontSize: 13, marginBottom: 20 }}>
+                {winner === 'YOU' ? 'Impressive moves, human.' : 'The machine is superior. Try again.'}
+              </p>
+              <button onClick={restart} style={{ background: winColor, color: '#000', border: 'none', borderRadius: 8, padding: '10px 28px', fontSize: 14, fontWeight: 'bold', fontFamily: 'monospace', cursor: 'pointer', letterSpacing: 2, boxShadow: `0 0 14px ${winColor}` }}>
+                ▶ PLAY AGAIN
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ color: '#ffffff33', fontFamily: 'monospace', fontSize: 11, marginTop: 12 }}>W/S or ↑↓ to move · First to {WIN_SCORE} wins</div>
+    </div>
+  );
+}
