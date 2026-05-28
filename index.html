@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Y2K CYBER RETRO ARCADE</title>
+    <title>Y2K RETRO ARCADE</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React and ReactDOM UMD builds -->
@@ -17,7 +17,6 @@
       body {
         font-family: 'Share Tech Mono', monospace;
       }
-      /* Custom scanline scroll animation */
       @keyframes scanline {
         0% { transform: translateY(-100%); }
         100% { transform: translateY(100%); }
@@ -27,415 +26,285 @@
       }
     </style>
   </head>
-  <body class="bg-[#04010a] text-[#00ffcc] overflow-x-hidden selection:bg-[#ff007f] selection:text-white">
+  <body class="bg-[#05010d] text-[#00ffcc] overflow-x-hidden select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-      const { useState, useEffect, useRef } = React;
+      const { useState, useEffect, useRef, useCallback } = React;
 
-      // --- WEB AUDIO API ENGINE ---
-      class AudioEngine {
+      // --- WEB AUDIO ENGINE & SEQUENCER (Synth Radio Station) ---
+      class RadioEngine {
         constructor() {
           this.ctx = null;
+          this.isPlaying = false;
+          this.trackIndex = 0;
+          this.tempo = 125;
+          this.currentBeat = 0;
+          this.timerId = null;
           this.muted = false;
+          this.freqs = [110, 130, 146, 165]; // Bassline notes
         }
 
         init() {
           if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)();
           }
-          if (this.ctx.state === 'suspended') {
+          if (this.ctx.state === "suspended") {
             this.ctx.resume();
           }
         }
 
-        playTone(freq, type, duration, slideTo = null) {
-          if (this.muted) return;
+        playSFX(freq, type, duration, slideTo = null) {
+          if (!this.ctx || this.muted) return;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+          if (slideTo) {
+            osc.frequency.exponentialRampToValueAtTime(slideTo, this.ctx.currentTime + duration);
+          }
+          gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + duration);
+        }
+
+        startRadio() {
           this.init();
-          try {
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-            if (slideTo) {
-              osc.frequency.exponentialRampToValueAtTime(slideTo, this.ctx.currentTime + duration);
+          if (this.isPlaying) return;
+          this.isPlaying = true;
+          this.currentBeat = 0;
+          
+          const scheduleAhead = 0.15;
+          let nextNoteTime = this.ctx.currentTime;
+
+          const scheduler = () => {
+            while (nextNoteTime < this.ctx.currentTime + scheduleAhead) {
+              this.playStationBeat(this.currentBeat, nextNoteTime);
+              const secondsPerBeat = 60.0 / this.tempo / 2;
+              nextNoteTime += secondsPerBeat;
+              this.currentBeat = (this.currentBeat + 1) % 16;
             }
-            gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start();
-            osc.stop(this.ctx.currentTime + duration);
-          } catch (e) {
-            console.warn("Audio Context init error:", e);
+            this.timerId = setTimeout(scheduler, 50);
+          };
+          scheduler();
+        }
+
+        stopRadio() {
+          this.isPlaying = false;
+          if (this.timerId) {
+            clearTimeout(this.timerId);
+            this.timerId = null;
           }
         }
 
-        playCoin() { this.playTone(587.33, 'square', 0.15, 880); }
-        playJump() { this.playTone(150, 'triangle', 0.2, 600); }
-        playHit() { this.playTone(300, 'sawtooth', 0.3, 40); }
-        playWin() { this.playTone(523.25, 'sine', 0.1); setTimeout(() => this.playTone(659.25, 'sine', 0.15), 100); }
-        playPoint() { this.playTone(880, 'sine', 0.08, 1200); }
+        playStationBeat(beat, time) {
+          if (this.muted) return;
+          
+          const noteIndex = Math.floor(beat / 4) % this.freqs.length;
+          const baseFreq = this.freqs[noteIndex];
+
+          if (beat % 2 === 0) {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = "triangle";
+            osc.frequency.setValueAtTime(baseFreq, time);
+            gain.gain.setValueAtTime(0.05, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(time);
+            osc.stop(time + 0.2);
+          }
+
+          if (this.trackIndex === 0) {
+            if (beat % 4 === 0 || beat === 7 || beat === 11) {
+              const osc = this.ctx.createOscillator();
+              const gain = this.ctx.createGain();
+              osc.type = "sine";
+              osc.frequency.setValueAtTime(baseFreq * 3, time);
+              gain.gain.setValueAtTime(0.02, time);
+              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+              osc.connect(gain);
+              gain.connect(this.ctx.destination);
+              osc.start(time);
+              osc.stop(time + 0.12);
+            }
+          } else {
+            if (beat % 3 === 0) {
+              const osc = this.ctx.createOscillator();
+              const gain = this.ctx.createGain();
+              osc.type = "square";
+              osc.frequency.setValueAtTime(baseFreq * 4, time);
+              gain.gain.setValueAtTime(0.015, time);
+              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+              osc.connect(gain);
+              gain.connect(this.ctx.destination);
+              osc.start(time);
+              osc.stop(time + 0.08);
+            }
+          }
+        }
       }
 
-      const audio = new AudioEngine();
+      const radio = new RadioEngine();
 
-      // --- DATA PRESETS ---
-      const GACHAPON_PRIZES = [
-        { id: "nokia", name: "3310 Prototype", rarity: "Legendary", desc: "Virtually indestructible. Restores cellular networks.", cost: 15, icon: "📱" },
-        { id: "floppy", name: "Glitch Floppy Disk", rarity: "Common", desc: "1.44MB storage. Holds critical core scripts.", cost: 5, icon: "💾" },
-        { id: "beeper", name: "Neon Translucent Pager", rarity: "Rare", desc: "For secure telemetry text exchanges.", cost: 10, icon: "📟" },
-        { id: "tamagotchi", name: "Cyber Pet v0.9", rarity: "Legendary", desc: "Requires persistent clock cycles to sustain.", cost: 20, icon: "👾" },
-        { id: "dialup", name: "56K Acoustic Coupler", rarity: "Rare", desc: "Translates analog waveforms to dynamic streams.", cost: 10, icon: "🔌" }
+      const TRACK_LIST = [
+        { name: "TRACK_01: ELECTRO_CYBER.MID", tempo: 130 },
+        { name: "TRACK_02: CHIP_RUNNER.MID", tempo: 118 }
       ];
 
-      const INITIAL_HIGH_SCORES = [
-        { name: "NEO_99", score: 120, game: "Flappy Cyber-Bird" },
-        { name: "BUG_SLAYER", score: 85, game: "Cyber Fence Jumper" },
-        { name: "TRINITY", score: 11, game: "Neon Pong" },
-        { name: "CYBER_PUNK", score: 240, game: "Retro Worm" }
-      ];
-
-      // --- MAIN REACT APPLICATION ---
+      // --- MAIN RETRO CONSOLE ---
       function App() {
         const [activeGame, setActiveGame] = useState("lobby");
-        const [tokens, setTokens] = useState(25);
-        const [unlockedPrizes, setUnlockedPrizes] = useState([]);
-        const [crtOverlay, setCrtOverlay] = useState(true);
-        const [highScores, setHighScores] = useState(INITIAL_HIGH_SCORES);
-        const [playerName, setPlayerName] = useState("GUEST_NET");
-        const [volumeMuted, setVolumeMuted] = useState(false);
+        const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+        const [trackIndex, setTrackIndex] = useState(0);
+        const [crtFilter, setCrtFilter] = useState(true);
 
-        useEffect(() => {
-          // Load localStorage if available
-          const localPrizes = localStorage.getItem("y2k_arcade_prizes");
-          if (localPrizes) setUnlockedPrizes(JSON.parse(localPrizes));
-          const localScores = localStorage.getItem("y2k_arcade_scores");
-          if (localScores) setHighScores(JSON.parse(localScores));
-          const localTokens = localStorage.getItem("y2k_arcade_tokens");
-          if (localTokens) setTokens(Number(localTokens));
-        }, []);
-
-        const saveHighScore = (score, gameName) => {
-          if (score <= 0) return;
-          const newScore = { name: playerName, score, game: gameName };
-          const updated = [...highScores, newScore]
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 8);
-          setHighScores(updated);
-          localStorage.setItem("y2k_arcade_scores", JSON.stringify(updated));
-        };
-
-        const awardTokens = (amount) => {
-          setTokens(prev => {
-            const next = prev + amount;
-            localStorage.setItem("y2k_arcade_tokens", String(next));
-            return next;
-          });
-          audio.playCoin();
-        };
-
-        const handlePurchasePrize = (prize) => {
-          if (tokens < prize.cost) {
-            audio.playHit();
-            alert("INSUFFICIENT CREDITS. Accumulate more tokens via simulation runs.");
-            return;
+        const handleToggleMusic = () => {
+          radio.init();
+          if (isPlayingMusic) {
+            radio.stopRadio();
+            setIsPlayingMusic(false);
+          } else {
+            radio.startRadio();
+            setIsPlayingMusic(true);
           }
-          if (unlockedPrizes.includes(prize.id)) {
-            alert("You already unlocked this digital artifact.");
-            return;
-          }
-          audio.playWin();
-          const nextTokens = tokens - prize.cost;
-          const nextPrizes = [...unlockedPrizes, prize.id];
-          setTokens(nextTokens);
-          setUnlockedPrizes(nextPrizes);
-          localStorage.setItem("y2k_arcade_tokens", String(nextTokens));
-          localStorage.setItem("y2k_arcade_prizes", JSON.stringify(nextPrizes));
         };
 
-        const toggleMute = () => {
-          audio.muted = !audio.muted;
-          setVolumeMuted(audio.muted);
+        const handleNextTrack = () => {
+          radio.init();
+          const nextIndex = (trackIndex + 1) % TRACK_LIST.length;
+          radio.trackIndex = nextIndex;
+          radio.tempo = TRACK_LIST[nextIndex].tempo;
+          setTrackIndex(nextIndex);
+          if (!isPlayingMusic) {
+            radio.startRadio();
+            setIsPlayingMusic(true);
+          } else {
+            radio.stopRadio();
+            radio.startRadio();
+          }
+          radio.playSFX(880, 'sine', 0.1);
         };
 
         return (
-          <div className="min-h-screen bg-[#06020f] text-[#00ffcc] flex flex-col relative overflow-hidden">
-            {/* CRT TV FX Overlay */}
-            {crtOverlay && (
-              <div className="pointer-events-none fixed inset-0 z-50 opacity-[0.07] overflow-hidden">
+          <div className="min-h-screen bg-[#04010a] text-[#00ffcc] flex flex-col relative overflow-hidden">
+            {/* CRT TV Visual Layer */}
+            {crtFilter && (
+              <div className="pointer-events-none fixed inset-0 z-50 opacity-[0.08] overflow-hidden">
                 <div className="scanline-effect w-full h-full bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.45)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_6px,6px_100%]" />
               </div>
             )}
 
-            {/* Header Terminal banner */}
-            <header className="border-b-4 border-[#ff007f] bg-[#0c051a] p-4 flex flex-wrap justify-between items-center gap-4 z-10 shadow-[0_4px_20px_rgba(255,0,127,0.25)]">
-              <div className="flex items-center space-x-3">
-                <div className="bg-[#ff007f] text-black font-extrabold px-3 py-1 text-2xl tracking-widest skew-x-3 transform -rotate-1 shadow-[0_0_10px_#ff007f]">
-                  Y2K // MULTI-CABINET
-                </div>
-                <div className="hidden md:inline border border-[#00ffcc]/30 px-2 py-0.5 text-xs text-gray-400">
-                  SYS_STATUS: ACTIVE
-                </div>
-              </div>
+            {/* Subdued Header */}
+            <header className="border-b-2 border-gray-800 bg-[#0c051a] p-3 flex flex-col md:flex-row justify-between items-center gap-4 z-10">
+              <span className="text-sm font-bold tracking-widest text-[#00ffcc]">ARCADE STATION</span>
 
-              <div className="flex items-center space-x-4">
-                <div className="bg-[#110924] border-2 border-[#00ffcc] px-3 py-1 flex items-center gap-2">
-                  <span className="text-[#ff007f] font-bold text-xs uppercase">CREDITS:</span>
-                  <span className="text-yellow-400 font-extrabold text-lg">🪙 {tokens}</span>
+              {/* Radio Controller HUD */}
+              <div className="flex flex-wrap items-center gap-3 bg-[#110924] border border-[#00ffcc]/20 p-2 rounded w-full md:w-auto">
+                <div className="flex flex-col flex-1 md:flex-none md:w-56 overflow-hidden">
+                  <span className="text-[10px] text-gray-400">RADIO FREQUENCY:</span>
+                  <span className="text-xs text-white truncate font-mono">
+                    {isPlayingMusic ? TRACK_LIST[trackIndex].name : "OFFLINE"}
+                  </span>
                 </div>
-                
-                <button
-                  onClick={toggleMute}
-                  className="px-2.5 py-1.5 border border-gray-600 hover:border-[#00ffcc] text-xs font-bold"
-                  title="Toggle Audio Engine"
-                >
-                  {volumeMuted ? "🔈 MUTED" : "🔊 AUDIO"}
-                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleToggleMusic}
+                    className="px-3 py-1 bg-gray-800 text-[#00ffcc] hover:bg-white hover:text-black text-xs font-bold transition-colors"
+                  >
+                    {isPlayingMusic ? "PAUSE" : "PLAY"}
+                  </button>
+                  <button
+                    onClick={handleNextTrack}
+                    className="px-3 py-1 border border-gray-600 text-xs text-white font-bold"
+                  >
+                    SKIP
+                  </button>
+                </div>
 
                 <button
-                  onClick={() => setCrtOverlay(!crtOverlay)}
-                  className={`px-2 py-1 border text-xs font-bold transition-all ${crtOverlay ? 'bg-[#ff007f] text-white border-transparent' : 'border-gray-600 text-gray-400'}`}
+                  onClick={() => setCrtFilter(!crtFilter)}
+                  className={`px-2 py-1 border text-xs font-bold ${crtFilter ? 'bg-[#00ffcc] text-black border-transparent' : 'border-gray-600 text-gray-500'}`}
                 >
-                  CRT: {crtOverlay ? "ON" : "OFF"}
+                  CRT
                 </button>
               </div>
             </header>
 
-            {/* Main Interactive Grid */}
-            <main className="flex-1 grid grid-cols-1 lg:grid-cols-4 p-4 lg:p-6 gap-6 z-10">
+            {/* Core Game Container */}
+            <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-8 flex flex-col justify-center z-10">
               
-              {/* Left Sidebar Control Deck */}
-              <section className="lg:col-span-1 flex flex-col space-y-6">
-                
-                {/* User registration module */}
-                <div className="border border-gray-700 bg-[#0e071c] p-4 rounded shadow-[4px_4px_0_rgba(255,0,127,0.15)]">
-                  <h3 className="text-xs uppercase font-extrabold text-[#ff007f] mb-2 tracking-widest border-b border-[#ff007f]/30 pb-1">
-                    📟 CYBER_ID REGISTER
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-xs text-gray-400">NODE_NAME:</span>
-                      <input
-                        type="text"
-                        maxLength={10}
-                        value={playerName}
-                        onChange={(e) => setPlayerName(e.target.value.toUpperCase())}
-                        className="bg-black border border-gray-700 text-[#00ffcc] text-xs font-mono p-1 rounded w-28 focus:outline-none focus:border-[#ff007f] text-right"
-                      />
-                    </div>
-                    <p className="text-[10px] text-gray-500 italic">
-                      Scores registered inside current sessions map directly to this identifier.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Winamp-style Synthesized MIDI Simulator */}
-                <div className="border border-gray-400 bg-gray-900 text-white p-3 rounded shadow-[6px_6px_0_rgba(100,100,100,0.3)]">
-                  <div className="bg-gradient-to-r from-blue-900 to-indigo-950 p-1 flex justify-between items-center text-[10px] font-bold uppercase mb-2">
-                    <span>🖲️ SYNC_MP3 PLAYER</span>
-                    <span className="text-emerald-400 animate-pulse">■ v1.02</span>
-                  </div>
-                  <div className="bg-black p-2 border border-gray-800 rounded mb-2">
-                    <div className="text-[10px] text-[#00ffcc] uppercase truncate mb-1">
-                      WAVE_FORM_SYNTH_ACTIVE
-                    </div>
-                    {/* Visualizer bars */}
-                    <div className="h-6 flex items-end gap-[1px]">
-                      {Array.from({ length: 16 }).map((_, idx) => (
-                        <div
-                          key={idx}
-                          style={{ height: `${Math.floor(Math.random() * 85) + 15}%` }}
-                          className="flex-1 bg-gradient-to-t from-emerald-500 via-[#00ffcc] to-[#ff007f]"
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => audio.playTone(330, 'square', 0.2, 660)} className="py-1 bg-gray-800 hover:bg-[#ff007f] text-[9px] font-bold text-center">
-                      SYNTH_A
-                    </button>
-                    <button onClick={() => audio.playTone(440, 'sawtooth', 0.3, 110)} className="py-1 bg-gray-800 hover:bg-[#00ffcc] hover:text-black text-[9px] font-bold text-center">
-                      SYNTH_B
-                    </button>
-                  </div>
-                </div>
-
-                {/* Cabinet Global Leaderboard */}
-                <div className="border border-[#00ffcc]/30 bg-black p-4 rounded">
-                  <h3 className="text-xs uppercase font-extrabold text-[#00ffcc] mb-3 tracking-widest border-b border-[#00ffcc]/20 pb-1 flex items-center justify-between">
-                    <span>🏆 LEADERBOARD</span>
-                    <span className="text-[9px] text-gray-500">SESSION TOP 8</span>
-                  </h3>
-                  <div className="space-y-2">
-                    {highScores.map((h, i) => (
-                      <div key={i} className="flex justify-between items-center text-xs border-b border-gray-900 pb-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-[#ff007f] font-bold">#{i+1}</span>
-                          <span className="text-white font-semibold truncate max-w-[80px]">{h.name}</span>
-                          <span className="text-gray-500 text-[9px]">({h.game})</span>
-                        </div>
-                        <span className="text-[#00ffcc] font-bold">{h.score}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              {/* Central Cabinet Main Screen */}
-              <section className="lg:col-span-2 flex flex-col space-y-4">
-                
-                {/* Game Select Navigation Tab bar */}
-                <div className="flex flex-wrap gap-1 bg-[#100725] p-1.5 border border-[#ff007f]/40">
-                  <button
-                    onClick={() => { audio.playCoin(); setActiveGame("lobby"); }}
-                    className={`flex-1 min-w-[100px] text-center py-2 text-xs font-bold transition-all ${activeGame === "lobby" ? "bg-[#ff007f] text-white" : "hover:bg-white/5 text-gray-400"}`}
-                  >
-                    LOBBY
-                  </button>
-                  <button
-                    onClick={() => { audio.playCoin(); setActiveGame("flappy"); }}
-                    className={`flex-1 min-w-[100px] text-center py-2 text-xs font-bold transition-all ${activeGame === "flappy" ? "bg-[#00ffcc] text-black" : "hover:bg-white/5 text-gray-400"}`}
-                  >
-                    CYBER-BIRD
-                  </button>
-                  <button
-                    onClick={() => { audio.playCoin(); setActiveGame("jumper"); }}
-                    className={`flex-1 min-w-[100px] text-center py-2 text-xs font-bold transition-all ${activeGame === "jumper" ? "bg-[#00ffcc] text-black" : "hover:bg-white/5 text-gray-400"}`}
-                  >
-                    FENCE JUMPER
-                  </button>
-                  <button
-                    onClick={() => { audio.playCoin(); setActiveGame("pong"); }}
-                    className={`flex-1 min-w-[100px] text-center py-2 text-xs font-bold transition-all ${activeGame === "pong" ? "bg-[#00ffcc] text-black" : "hover:bg-white/5 text-gray-400"}`}
-                  >
-                    PONG
-                  </button>
-                  <button
-                    onClick={() => { audio.playCoin(); setActiveGame("worm"); }}
-                    className={`flex-1 min-w-[100px] text-center py-2 text-xs font-bold transition-all ${activeGame === "worm" ? "bg-[#00ffcc] text-black" : "hover:bg-white/5 text-gray-400"}`}
-                  >
-                    RETRO WORM
-                  </button>
-                </div>
-
-                {/* Dynamic Screen Housing */}
-                <div className="border-4 border-[#00ffcc] bg-black p-4 rounded-xl min-h-[460px] relative flex flex-col shadow-[0_0_30px_rgba(0,255,204,0.15)]">
-                  {/* Decorative Reflection */}
-                  <div className="absolute inset-0 pointer-events-none rounded bg-gradient-to-tr from-transparent via-white/[0.02] to-white/[0.06] z-10" />
-
-                  {activeGame === "lobby" && (
-                    <div className="flex-1 flex flex-col justify-center items-center text-center p-4">
-                      <div className="text-3xl font-extrabold text-[#ff007f] animate-pulse mb-2">
-                        INSERT COIN TO START
-                      </div>
-                      <p className="text-xs text-gray-400 max-w-sm mb-8">
-                        Earn 1 🪙 token for every milestone points accumulated across each terminal simulation below.
-                      </p>
-
-                      <div className="grid grid-cols-2 gap-4 w-full">
-                        <div onClick={() => { audio.playCoin(); setActiveGame("flappy"); }} className="border border-dashed border-[#ff007f] hover:bg-[#ff007f]/5 p-3 rounded cursor-pointer transition-colors text-center">
-                          <span className="text-2xl">🐦</span>
-                          <h4 className="text-xs font-extrabold mt-1">FLAPPY CYBER-BIRD</h4>
-                        </div>
-                        <div onClick={() => { audio.playCoin(); setActiveGame("jumper"); }} className="border border-dashed border-[#00ffcc] hover:bg-[#00ffcc]/5 p-3 rounded cursor-pointer transition-colors text-center">
-                          <span className="text-2xl">🏃</span>
-                          <h4 className="text-xs font-extrabold mt-1">FENCE JUMPER</h4>
-                        </div>
-                        <div onClick={() => { audio.playCoin(); setActiveGame("pong"); }} className="border border-dashed border-[#00ffcc] hover:bg-[#00ffcc]/5 p-3 rounded cursor-pointer transition-colors text-center">
-                          <span className="text-2xl">🏓</span>
-                          <h4 className="text-xs font-extrabold mt-1">NEON PONG</h4>
-                        </div>
-                        <div onClick={() => { audio.playCoin(); setActiveGame("worm"); }} className="border border-dashed border-[#ff007f] hover:bg-[#ff007f]/5 p-3 rounded cursor-pointer transition-colors text-center">
-                          <span className="text-2xl">🐍</span>
-                          <h4 className="text-xs font-extrabold mt-1">RETRO WORM</h4>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeGame === "flappy" && (
-                    <FlappyBirdGame onSave={saveHighScore} onAward={awardTokens} />
-                  )}
-
-                  {activeGame === "jumper" && (
-                    <FenceJumperGame onSave={saveHighScore} onAward={awardTokens} />
-                  )}
-
-                  {activeGame === "pong" && (
-                    <PongGame onSave={saveHighScore} onAward={awardTokens} />
-                  )}
-
-                  {activeGame === "worm" && (
-                    <WormGame onSave={saveHighScore} onAward={awardTokens} />
-                  )}
-                </div>
-              </section>
-
-              {/* Right Sidebar Gachapon Prize Shop */}
-              <section className="lg:col-span-1 flex flex-col space-y-6">
-                <div className="border border-[#ff007f] bg-[#0c051a] p-4 rounded shadow-[0_0_15px_rgba(255,0,127,0.15)] flex-1 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-xs uppercase font-extrabold text-[#ff007f] mb-3 tracking-widest border-b border-[#ff007f]/30 pb-1 flex items-center justify-between">
-                      <span>🎟️ TOKENS EXCHANGE</span>
-                      <span className="text-[10px] bg-[#ff007f]/20 text-white px-2 py-0.5 rounded">STORE</span>
-                    </h3>
-                    <p className="text-[11px] text-gray-400 mb-4">
-                      Convert earned tokens into limited edition virtual artifacts. Collect them all.
+              {/* Dynamic Screen Housing */}
+              <div className="border-4 border-[#00ffcc] bg-black p-4 rounded-xl min-h-[440px] relative flex flex-col shadow-[0_0_20px_rgba(0,255,204,0.1)]">
+                {activeGame === "lobby" ? (
+                  <div className="flex-1 flex flex-col justify-center items-center text-center p-4">
+                    <p className="text-xs text-gray-400 max-w-sm mb-8 font-mono">
+                      Select a game module to launch its canvas terminal.
                     </p>
 
-                    <div className="space-y-3">
-                      {GACHAPON_PRIZES.map((prize) => {
-                        const isUnlocked = unlockedPrizes.includes(prize.id);
-                        return (
-                          <div key={prize.id} className="border border-gray-800 bg-[#080214] p-2 flex justify-between items-center text-xs">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-xl">{prize.icon}</span>
-                              <div>
-                                <h4 className={`font-bold ${isUnlocked ? "text-gray-500 line-through" : "text-white"}`}>{prize.name}</h4>
-                                <p className="text-[9px] text-gray-400">{prize.desc}</p>
-                              </div>
-                            </div>
-                            <button
-                              disabled={isUnlocked}
-                              onClick={() => handlePurchasePrize(prize)}
-                              className={`px-2 py-1 text-[10px] font-extrabold transition-all border ${isUnlocked ? 'border-gray-800 text-gray-500 cursor-not-allowed' : 'border-[#ff007f] hover:bg-[#ff007f] hover:text-white text-[#ff007f]'}`}
-                            >
-                              {isUnlocked ? "OWNED" : `${prize.cost}🪙`}
-                            </button>
-                          </div>
-                        );
-                      })}
+                    <div className="grid grid-cols-2 gap-4 w-full max-w-md">
+                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("flappy"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
+                        <span className="text-3xl block mb-1">🐦</span>
+                        <h4 className="text-xs font-extrabold text-white">1. FLAPPY BIRD</h4>
+                      </div>
+                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("jumper"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
+                        <span className="text-3xl block mb-1">🦒</span>
+                        <h4 className="text-xs font-extrabold text-white">2. FENCE JUMPER</h4>
+                      </div>
+                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("pong"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
+                        <span className="text-3xl block mb-1">🏓</span>
+                        <h4 className="text-xs font-extrabold text-white">3. NEON PONG</h4>
+                      </div>
+                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("worm"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
+                        <span className="text-3xl block mb-1">🐍</span>
+                        <h4 className="text-xs font-extrabold text-white">4. RETRO WORM</h4>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="pt-4 border-t border-[#ff007f]/20 mt-4 text-center">
-                    <span className="text-[11px] text-[#00ffcc] font-bold">
-                      UNLOCKED ARTIFACTS: {unlockedPrizes.length} / {GACHAPON_PRIZES.length}
-                    </span>
+                ) : (
+                  <div className="flex-1 flex flex-col">
+                    {/* Navigation bar inside active game screens to return to Lobby */}
+                    <div className="flex justify-between items-center border-b border-[#00ffcc]/20 pb-2 mb-3">
+                      <button 
+                        onClick={() => { radio.playSFX(150, 'triangle', 0.15); setActiveGame("lobby"); }}
+                        className="text-xs font-bold text-[#ff007f] hover:text-white transition-colors"
+                      >
+                        ← BACK TO LOBBY
+                      </button>
+                    </div>
+                    {activeGame === "flappy" && <FlappyBirdGame />}
+                    {activeGame === "jumper" && <FenceJumperGame />}
+                    {activeGame === "pong" && <PongGame />}
+                    {activeGame === "worm" && <WormGame />}
                   </div>
-                </div>
-              </section>
+                )}
+              </div>
             </main>
 
-            <footer className="bg-black text-[10px] text-gray-500 text-center py-3 border-t border-gray-900 mt-auto">
-              © 1999-2000 CYBERNECTICS DECK SYSTEMS. ALL CODEPIXELS OPERATE INDEPENDENTLY.
+            <footer className="bg-black text-[10px] text-gray-600 text-center py-3 border-t border-gray-900 mt-auto">
+              SYSTEM ONLINE. SELECT A GAME FROM THE LOBBY CONTAINER.
             </footer>
           </div>
         );
       }
 
-      // --- GAME 1: FLAPPY CYBER-BIRD ---
-      function FlappyBirdGame({ onSave, onAward }) {
+      // --- GAME 1: FLAPPY BIRD ---
+      function FlappyBirdGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
         const [score, setScore] = useState(0);
+        const [countdown, setCountdown] = useState(3);
 
         const stateRef = useRef({
           birdY: 150,
           velocity: 0,
           gravity: 0.35,
-          jump: -6,
+          jump: -6.5,
           pipes: [],
           frame: 0,
           score: 0,
@@ -454,18 +323,38 @@
             gameOver: false
           };
           setScore(0);
-          setGameState("playing");
-          audio.playCoin();
+          setCountdown(3);
+          setGameState("countdown");
+          radio.playSFX(440, 'sine', 0.1);
         };
 
         const handleAction = () => {
           if (gameState === "idle" || gameState === "over") {
             resetGame();
-          } else {
+          } else if (gameState === "playing") {
             stateRef.current.velocity = stateRef.current.jump;
-            audio.playJump();
+            radio.playSFX(150, 'triangle', 0.2, 600);
           }
         };
+
+        useEffect(() => {
+          if (gameState !== "countdown") return;
+          
+          let timer = 3;
+          const interval = setInterval(() => {
+            timer--;
+            if (timer > 0) {
+              setCountdown(timer);
+              radio.playSFX(440, 'sine', 0.1);
+            } else {
+              clearInterval(interval);
+              setGameState("playing");
+              radio.playSFX(880, 'sine', 0.2);
+            }
+          }, 1000);
+
+          return () => clearInterval(interval);
+        }, [gameState]);
 
         useEffect(() => {
           const handleKeyDown = (e) => {
@@ -489,7 +378,7 @@
             ctx.fillStyle = "#03010b";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Vector grid background
+            // Tech visual grid
             ctx.strokeStyle = "rgba(0, 255, 120, 0.05)";
             ctx.lineWidth = 1;
             for (let i = 0; i < canvas.width; i += 20) {
@@ -501,8 +390,7 @@
               state.velocity += state.gravity;
               state.birdY += state.velocity;
 
-              // Generate pipes
-              if (state.frame % 100 === 0) {
+              if (state.frame % 90 === 0) {
                 const gap = 90;
                 const minH = 40;
                 const maxH = canvas.height - gap - minH;
@@ -516,34 +404,25 @@
                 });
               }
 
-              // Update pipes
               for (let i = state.pipes.length - 1; i >= 0; i--) {
                 const p = state.pipes[i];
                 p.x -= 2;
 
-                // Draw Top Pipe
-                ctx.fillStyle = "rgba(255, 0, 127, 0.15)";
+                ctx.fillStyle = "rgba(255, 0, 127, 0.25)";
                 ctx.strokeStyle = "#ff007f";
                 ctx.lineWidth = 2;
                 ctx.fillRect(p.x, 0, p.width, p.topHeight);
                 ctx.strokeRect(p.x, 0, p.width, p.topHeight);
-
-                // Draw Bottom Pipe
                 ctx.fillRect(p.x, p.bottomY, p.width, canvas.height - p.bottomY);
                 ctx.strokeRect(p.x, p.bottomY, p.width, canvas.height - p.bottomY);
 
-                // Score criteria
                 if (!p.passed && p.x + p.width < 50) {
                   p.passed = true;
                   state.score++;
                   setScore(state.score);
-                  audio.playPoint();
-                  if (state.score % 10 === 0) {
-                    onAward(1);
-                  }
+                  radio.playSFX(880, 'sine', 0.08, 1200);
                 }
 
-                // Collisions
                 if (
                   (50 + 10 > p.x && 50 - 10 < p.x + p.width) &&
                   (state.birdY - 10 < p.topHeight || state.birdY + 10 > p.bottomY)
@@ -556,18 +435,15 @@
                 }
               }
 
-              // Boundaries check
               if (state.birdY > canvas.height || state.birdY < 0) {
                 state.gameOver = true;
               }
 
               if (state.gameOver) {
                 setGameState("over");
-                audio.playHit();
-                onSave(state.score, "Flappy Cyber-Bird");
+                radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
-              // Draw Cyber-Bird (Vector triangle)
               ctx.save();
               ctx.translate(50, state.birdY);
               const angle = Math.min(Math.max(state.velocity * 0.08, -0.6), 0.8);
@@ -584,8 +460,36 @@
               ctx.fill();
               ctx.stroke();
               ctx.restore();
+            } else if (gameState === "countdown") {
+              ctx.fillStyle = "rgba(12, 5, 26, 0.85)";
+              ctx.fillRect(20, 40, canvas.width - 40, canvas.height - 80);
+              ctx.strokeStyle = "#00ffcc";
+              ctx.strokeRect(20, 40, canvas.width - 40, canvas.height - 80);
+
+              ctx.fillStyle = "#ffffff";
+              ctx.textAlign = "center";
+              ctx.font = 'bold 24px "Share Tech Mono", monospace';
+              ctx.fillText("READY?", canvas.width / 2, 100);
+
+              ctx.font = 'bold 54px "Share Tech Mono", monospace';
+              ctx.fillStyle = "#ff007f";
+              ctx.fillText(countdown, canvas.width / 2, 165);
+
+              ctx.save();
+              ctx.translate(50, state.birdY);
+              ctx.fillStyle = "#00ffcc";
+              ctx.strokeStyle = "#fff";
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(12, 0);
+              ctx.lineTo(-10, -10);
+              ctx.lineTo(-6, 0);
+              ctx.lineTo(-10, 10);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+              ctx.restore();
             } else {
-              // Draw static visual display
               ctx.fillStyle = "rgba(12, 5, 26, 0.85)";
               ctx.fillRect(20, 40, canvas.width - 40, canvas.height - 80);
               ctx.strokeStyle = "#00ffcc";
@@ -596,18 +500,14 @@
               ctx.font = '12px "Share Tech Mono", monospace';
 
               if (gameState === "idle") {
-                ctx.fillText("FLAPPY CYBER-BIRD v1.2", canvas.width / 2, 100);
-                ctx.fillStyle = "#ff007f";
-                ctx.fillText("TAP OR PRESS SPACE TO FLY", canvas.width / 2, 160);
-                ctx.fillStyle = "gray";
-                ctx.fillText("DODGE TERMINAL BINARY PILLARS", canvas.width / 2, 220);
+                ctx.fillText("TAP SCREEN OR PRESS SPACE TO START", canvas.width / 2, 140);
               } else if (gameState === "over") {
                 ctx.fillStyle = "#ff007f";
-                ctx.fillText("GAME OVER / CONNECTION DISRUPTED", canvas.width / 2, 90);
+                ctx.fillText("COLLISION DETECTED", canvas.width / 2, 90);
                 ctx.fillStyle = "#00ffcc";
-                ctx.fillText(`SCORE ACCUMULATED: ${state.score}`, canvas.width / 2, 140);
+                ctx.fillText(`SCORE: ${state.score}`, canvas.width / 2, 140);
                 ctx.fillStyle = "white";
-                ctx.fillText("TAP SCREEN TO RETRY RUN", canvas.width / 2, 200);
+                ctx.fillText("TAP SCREEN TO RETRY", canvas.width / 2, 190);
               }
             }
 
@@ -616,7 +516,7 @@
 
           render();
           return () => cancelAnimationFrame(animId);
-        }, [gameState]);
+        }, [gameState, countdown]);
 
         return (
           <div className="flex-1 flex flex-col justify-between">
@@ -624,21 +524,15 @@
               <span className="text-gray-400">FLAPPY CYBER-BIRD</span>
               <span className="text-white font-bold">SCORE: {score}</span>
             </div>
-            <div 
-              onClick={handleAction}
-              className="relative border-2 border-[#ff007f]/50 bg-black flex-1 flex items-center justify-center cursor-pointer"
-            >
-              <canvas ref={canvasRef} width={400} height={280} className="w-full aspect-[400/280] block" />
-            </div>
-            <div className="mt-2 text-center text-[11px] text-gray-500">
-              CLICK OR PRESS SPACEBAR TO STEER FLIGHT FLAP
+            <div onClick={handleAction} className="relative border-2 border-[#ff007f]/50 bg-black flex-1 flex items-center justify-center cursor-pointer">
+              <canvas ref={canvasRef} width={400} height={250} className="w-full aspect-[400/250] block" />
             </div>
           </div>
         );
       }
 
-      // --- GAME 2: CYBER FENCE JUMPER (Dino Runner) ---
-      function FenceJumperGame({ onSave, onAward }) {
+      // --- GAME 2: CYBER GIRAFFE JUMPER ---
+      function FenceJumperGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
         const [score, setScore] = useState(0);
@@ -649,7 +543,7 @@
           gravity: 0.6,
           isGrounded: true,
           obstacles: [],
-          speed: 4,
+          speed: 4.5,
           score: 0,
           frame: 0,
           gameOver: false
@@ -669,7 +563,7 @@
           };
           setScore(0);
           setGameState("playing");
-          audio.playCoin();
+          radio.playSFX(587.33, 'square', 0.15, 880);
         };
 
         const handleJump = () => {
@@ -678,7 +572,7 @@
           } else if (stateRef.current.isGrounded) {
             stateRef.current.velocity = -9;
             stateRef.current.isGrounded = false;
-            audio.playJump();
+            radio.playSFX(150, 'triangle', 0.2, 600);
           }
         };
 
@@ -706,7 +600,6 @@
 
             const floorY = canvas.height - 40;
 
-            // Draw Wireframe floor line
             ctx.strokeStyle = "#ff007f";
             ctx.lineWidth = 3;
             ctx.beginPath();
@@ -714,18 +607,8 @@
             ctx.lineTo(canvas.width, floorY);
             ctx.stroke();
 
-            // Background horizontal floor vanishing line
-            ctx.strokeStyle = "rgba(0, 255, 200, 0.1)";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(0, floorY + 15);
-            ctx.lineTo(canvas.width, floorY + 15);
-            ctx.stroke();
-
             if (gameState === "playing") {
               state.frame++;
-              
-              // Apply Physics to character
               state.velocity += state.gravity;
               state.playerY += state.velocity;
 
@@ -735,46 +618,33 @@
                 state.isGrounded = true;
               }
 
-              // Update Score over frames
               state.score++;
               if (state.score % 10 === 0) {
                 setScore(Math.floor(state.score / 10));
               }
 
-              // Speed scaling
-              state.speed = 4.5 + Math.floor(state.score / 200) * 0.5;
+              state.speed = 4.5 + Math.floor(state.score / 250) * 0.5;
 
-              // Obstacle spawn logic
-              if (state.frame % 110 === 0 || (Math.random() < 0.005 && state.frame % 40 === 0)) {
+              if (state.frame % 110 === 0) {
                 state.obstacles.push({
                   x: canvas.width,
-                  width: 15 + Math.random() * 15,
-                  height: 25 + Math.random() * 20
+                  width: 15 + Math.random() * 10,
+                  height: 25 + Math.random() * 15
                 });
               }
 
-              // Render & move obstacles
               for (let i = state.obstacles.length - 1; i >= 0; i--) {
                 const obs = state.obstacles[i];
                 obs.x -= state.speed;
 
-                // Draw barrier obstacle (Fence)
                 ctx.fillStyle = "#00ffcc";
                 ctx.strokeStyle = "#fff";
                 ctx.lineWidth = 1.5;
                 ctx.fillRect(obs.x, floorY - obs.height, obs.width, obs.height);
                 ctx.strokeRect(obs.x, floorY - obs.height, obs.width, obs.height);
 
-                // Simple fence crossbars
-                ctx.strokeStyle = "#020108";
-                ctx.beginPath();
-                ctx.moveTo(obs.x, floorY - obs.height / 2);
-                ctx.lineTo(obs.x + obs.width, floorY - obs.height / 2);
-                ctx.stroke();
-
-                // Simple Bounding Box Collision
-                const playerHeight = 35;
-                const playerWidth = 20;
+                const playerHeight = 45;
+                const playerWidth = 22;
                 const playerX = 60;
                 const realPlayerY = floorY - playerHeight + state.playerY;
 
@@ -793,28 +663,58 @@
 
               if (state.gameOver) {
                 setGameState("over");
-                audio.playHit();
-                const finalScore = Math.floor(state.score / 10);
-                onSave(finalScore, "Cyber Fence Jumper");
-                const tokensEarned = Math.floor(finalScore / 10);
-                if (tokensEarned > 0) onAward(tokensEarned);
+                radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
-              // Draw Running Player Avatar (Vector Neon Boxy Runner)
+              // --- NEON CYBER GIRAFFE RENDER ---
               const px = 60;
-              const py = floorY - 35 + state.playerY;
-              ctx.fillStyle = "#ff007f";
-              ctx.strokeStyle = "#ffffff";
-              ctx.lineWidth = 2;
-              ctx.fillRect(px, py, 20, 35);
-              ctx.strokeRect(px, py, 20, 35);
+              const py = floorY - 45 + state.playerY;
 
-              // Cyber-Visor element
-              ctx.fillStyle = "#00ffcc";
-              ctx.fillRect(px + 10, py + 5, 10, 5);
+              ctx.fillStyle = "#ffcc00";
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = 1;
+
+              let backLegSwing = 0;
+              let frontLegSwing = 0;
+              if (state.isGrounded) {
+                const swingFreq = 0.45;
+                backLegSwing = Math.sin(state.frame * swingFreq) * 5;
+                frontLegSwing = -Math.sin(state.frame * swingFreq) * 5;
+              } else {
+                backLegSwing = -3;
+                frontLegSwing = 3;
+              }
+
+              ctx.fillRect(px + 4, py + 30, 3, 7);
+              ctx.fillRect(px + 4 + backLegSwing, py + 37, 3, 8);
+
+              ctx.fillRect(px + 12, py + 30, 3, 7);
+              ctx.fillRect(px + 12 + frontLegSwing, py + 37, 3, 8);
+
+              ctx.fillStyle = "#ffcc00";
+              ctx.fillRect(px + 2, py + 16, 16, 14);
+
+              ctx.fillStyle = "#ff007f";
+              ctx.fillRect(px + 5, py + 19, 3, 3);
+              ctx.fillRect(px + 11, py + 23, 3, 3);
+              ctx.fillRect(px + 6, py + 25, 2, 2);
+
+              ctx.fillStyle = "#ffcc00";
+              ctx.fillRect(px + 13, py + 2, 4, 15);
+
+              ctx.fillStyle = "#ff007f";
+              ctx.fillRect(px + 14, py + 6, 2, 2);
+              ctx.fillRect(px + 14, py + 11, 2, 2);
+
+              ctx.fillStyle = "#ffcc00";
+              ctx.fillRect(px + 13, py - 3, 8, 6);
+
+              ctx.fillRect(px + 14, py - 6, 2, 3);
+
+              ctx.fillStyle = "#000000";
+              ctx.fillRect(px + 18, py - 1, 2, 2);
 
             } else {
-              // Menu Stage visualizer
               ctx.fillStyle = "rgba(12, 5, 26, 0.85)";
               ctx.fillRect(20, 30, canvas.width - 40, canvas.height - 60);
               ctx.strokeStyle = "#00ffcc";
@@ -825,18 +725,14 @@
               ctx.font = '12px "Share Tech Mono", monospace';
 
               if (gameState === "idle") {
-                ctx.fillText("CYBER FENCE JUMPER", canvas.width / 2, 80);
-                ctx.fillStyle = "#ff007f";
-                ctx.fillText("PRESS JUMP OR SPACEBAR TO LEAP", canvas.width / 2, 140);
-                ctx.fillStyle = "gray";
-                ctx.fillText("JUMP OVER GROWING DEFENSIVE FIREWALL BARRIERS", canvas.width / 2, 190);
+                ctx.fillText("TAP SCREEN OR SPACE TO START GIRAFFE RUN", canvas.width / 2, 140);
               } else if (gameState === "over") {
                 ctx.fillStyle = "#ff007f";
-                ctx.fillText("COLLISION EXCEPTION DETECTED", canvas.width / 2, 80);
+                ctx.fillText("IMPACT COLLISION", canvas.width / 2, 80);
                 ctx.fillStyle = "#00ffcc";
-                ctx.fillText(`SCORE ACCUMULATED: ${Math.floor(state.score / 10)}`, canvas.width / 2, 130);
+                ctx.fillText(`SCORE: ${Math.floor(state.score / 10)}`, canvas.width / 2, 130);
                 ctx.fillStyle = "white";
-                ctx.fillText("TAP SCREEN TO JUMP / REBOOT RUN", canvas.width / 2, 190);
+                ctx.fillText("TAP SCREEN TO RETRY", canvas.width / 2, 190);
               }
             }
 
@@ -850,235 +746,244 @@
         return (
           <div className="flex-1 flex flex-col justify-between">
             <div className="flex justify-between items-center text-xs mb-2">
-              <span className="text-gray-400">CYBER FENCE JUMPER</span>
+              <span className="text-gray-400">CYBER GIRAFFE JUMPER</span>
               <span className="text-white font-bold">SCORE: {score}</span>
             </div>
-            <div 
-              onClick={handleJump}
-              className="relative border-2 border-[#00ffcc]/50 bg-black flex-1 flex items-center justify-center cursor-pointer"
-            >
-              <canvas ref={canvasRef} width={400} height={280} className="w-full aspect-[400/280] block" />
-            </div>
-            <div className="mt-2 text-center text-[11px] text-gray-500">
-              TAP CONTAINER OR PRESS SPACEBAR / UP-ARROW TO JUMP
+            <div onClick={handleJump} className="relative border-2 border-[#00ffcc]/50 bg-black flex-1 flex items-center justify-center cursor-pointer">
+              <canvas ref={canvasRef} width={400} height={250} className="w-full aspect-[400/250] block" />
             </div>
           </div>
         );
       }
 
-      // --- GAME 3: NEON PONG (PING PONG) ---
-      function PongGame({ onSave, onAward }) {
+      // --- GAME 3: NEON PONG ---
+      const W = 800, H = 500;
+      const PADDLE_W = 12, PADDLE_H = 80;
+      const BALL_R = 8;
+      const WIN_SCORE = 7;
+      const AI_SPEED = 4;
+
+      function PongGame() {
         const canvasRef = useRef(null);
-        const [gameState, setGameState] = useState("idle");
-        const [score, setScore] = useState(0);
+        const stateRef = useRef(null);
+        const animRef = useRef(null);
+        const keysRef = useRef({});
+        const [winner, setWinner] = useState(null);
+        const winnerRef = useRef(null);
 
-        const stateRef = useRef({
-          playerY: 100,
-          aiY: 100,
-          paddleH: 50,
-          paddleW: 8,
-          ballX: 200,
-          ballY: 140,
-          ballDX: 3,
-          ballDY: 1.5,
-          score: 0,
-          gameOver: false
-        });
+        const initState = useCallback(() => ({
+          ball: { x: W / 2, y: H / 2, vx: (Math.random() > 0.5 ? 1 : -1) * 5, vy: (Math.random() - 0.5) * 6 },
+          player: { y: H / 2 - PADDLE_H / 2 },
+          ai: { y: H / 2 - PADDLE_H / 2 },
+          scoreP: 0, scoreAI: 0,
+          over: false,
+          particles: [],
+        }), []);
 
-        const resetGame = () => {
-          stateRef.current = {
-            playerY: 110,
-            aiY: 110,
-            paddleH: 50,
-            paddleW: 8,
-            ballX: 200,
-            ballY: 140,
-            ballDX: 3.5 * (Math.random() > 0.5 ? 1 : -1),
-            ballDY: (Math.random() * 2 - 1) * 2,
-            score: 0,
-            gameOver: false
-          };
-          setScore(0);
-          setGameState("playing");
-          audio.playCoin();
-        };
-
-        const handleMouseMove = (e) => {
-          if (gameState !== "playing" || !canvasRef.current) return;
-          const rect = canvasRef.current.getBoundingClientRect();
-          const root = document.documentElement;
-          const mouseY = e.clientY - rect.top - root.scrollTop;
-          stateRef.current.playerY = mouseY - stateRef.current.paddleH / 2;
-        };
-
-        const handleTouchMove = (e) => {
-          if (gameState !== "playing" || !canvasRef.current) return;
-          const rect = canvasRef.current.getBoundingClientRect();
-          const touchY = e.touches[0].clientY - rect.top;
-          stateRef.current.playerY = touchY - stateRef.current.paddleH / 2;
-        };
+        const restart = useCallback(() => {
+          stateRef.current = initState();
+          setWinner(null);
+          radio.playSFX(587.33, 'square', 0.15, 880);
+        }, [initState]);
 
         useEffect(() => {
+          stateRef.current = initState();
           const canvas = canvasRef.current;
-          if (!canvas) return;
-          let animId;
-          const ctx = canvas.getContext("2d");
+          const ctx = canvas.getContext('2d');
+          canvas.width = W;
+          canvas.height = H;
 
-          const render = () => {
-            const state = stateRef.current;
-            ctx.fillStyle = "#010806";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+          const onKey = (e) => { keysRef.current[e.code] = e.type === 'keydown'; };
+          window.addEventListener('keydown', onKey);
+          window.addEventListener('keyup', onKey);
 
-            // Center Net
-            ctx.strokeStyle = "rgba(0, 255, 200, 0.1)";
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.moveTo(canvas.width / 2, 0);
-            ctx.lineTo(canvas.width / 2, canvas.height);
-            ctx.stroke();
-            ctx.setLineDash([]); // clear dash
+          function resetBall(gs, dir) {
+            gs.ball = { x: W / 2, y: H / 2, vx: dir * (4.5 + Math.random()), vy: (Math.random() - 0.5) * 6 };
+          }
 
-            if (gameState === "playing") {
-              // Paddle boundaries
-              if (state.playerY < 0) state.playerY = 0;
-              if (state.playerY > canvas.height - state.paddleH) state.playerY = canvas.height - state.paddleH;
+          function burst(gs, x, y, color) {
+            for (let i = 0; i < 12; i++) {
+              gs.particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, color });
+            }
+          }
 
-              // Simple AI tracking ball
-              const aiCenter = state.aiY + state.paddleH / 2;
-              if (aiCenter < state.ballY - 15) {
-                state.aiY += 2.5;
-              } else if (aiCenter > state.ballY + 15) {
-                state.aiY -= 2.5;
+          let lastTime = performance.now();
+          function loop(time) {
+            const gs = stateRef.current;
+            if (!gs) return;
+            const dt = Math.min((time - lastTime) / 16.67, 2);
+            lastTime = time;
+
+            if (!gs.over) {
+              const speed = 6;
+              if (keysRef.current['ArrowUp'] || keysRef.current['KeyW']) gs.player.y -= speed * dt;
+              if (keysRef.current['ArrowDown'] || keysRef.current['KeyS']) gs.player.y += speed * dt;
+              gs.player.y = Math.max(0, Math.min(H - PADDLE_H, gs.player.y));
+
+              const aiCenter = gs.ai.y + PADDLE_H / 2;
+              if (aiCenter < gs.ball.y - 10) gs.ai.y += AI_SPEED * dt;
+              else if (aiCenter > gs.ball.y + 10) gs.ai.y -= AI_SPEED * dt;
+              gs.ai.y = Math.max(0, Math.min(H - PADDLE_H, gs.ai.y));
+
+              gs.ball.x += gs.ball.vx * dt;
+              gs.ball.y += gs.ball.vy * dt;
+
+              if (gs.ball.y - BALL_R < 0) {
+                gs.ball.y = BALL_R;
+                gs.ball.vy *= -1;
+                radio.playSFX(330, 'sine', 0.05);
               }
-              if (state.aiY < 0) state.aiY = 0;
-              if (state.aiY > canvas.height - state.paddleH) state.aiY = canvas.height - state.paddleH;
-
-              // Move Ball
-              state.ballX += state.ballDX;
-              state.ballY += state.ballDY;
-
-              // Ceiling/Floor Bounce
-              if (state.ballY < 0 || state.ballY > canvas.height) {
-                state.ballDY = -state.ballDY;
-                audio.playTone(330, 'sine', 0.05);
+              if (gs.ball.y + BALL_R > H) {
+                gs.ball.y = H - BALL_R;
+                gs.ball.vy *= -1;
+                radio.playSFX(330, 'sine', 0.05);
               }
 
-              // Paddle collision (Left / Player)
-              if (state.ballX <= 20 + state.paddleW && state.ballX >= 20) {
-                if (state.ballY >= state.playerY && state.ballY <= state.playerY + state.paddleH) {
-                  state.ballDX = -state.ballDX;
-                  state.ballDX *= 1.05; // accelerate speed slightly
-                  state.score++;
-                  setScore(state.score);
-                  audio.playPoint();
-                  if (state.score % 5 === 0) {
-                    onAward(1);
-                  }
+              const px = 20;
+              if (gs.ball.vx < 0 && gs.ball.x - BALL_R < px + PADDLE_W && gs.ball.x + BALL_R > px &&
+                  gs.ball.y > gs.player.y && gs.ball.y < gs.player.y + PADDLE_H) {
+                gs.ball.x = px + PADDLE_W + BALL_R;
+                const rel = (gs.ball.y - (gs.player.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+                gs.ball.vy = rel * 7;
+                gs.ball.vx = Math.abs(gs.ball.vx) * 1.05;
+                burst(gs, px + PADDLE_W, gs.ball.y, '#00ffff');
+                radio.playSFX(880, 'sine', 0.08, 1200);
+              }
+
+              const ax = W - 20 - PADDLE_W;
+              if (gs.ball.vx > 0 && gs.ball.x + BALL_R > ax && gs.ball.x - BALL_R < ax + PADDLE_W &&
+                  gs.ball.y > gs.ai.y && gs.ball.y < gs.ai.y + PADDLE_H) {
+                gs.ball.x = ax - BALL_R;
+                const rel = (gs.ball.y - (gs.ai.y + PADDLE_H / 2)) / (PADDLE_H / 2);
+                gs.ball.vy = rel * 7;
+                gs.ball.vx = -Math.abs(gs.ball.vx) * 1.05;
+                burst(gs, ax, gs.ball.y, '#ff00ff');
+                radio.playSFX(440, 'sine', 0.05);
+              }
+
+              if (gs.ball.x < 0) {
+                gs.scoreAI++;
+                burst(gs, 0, gs.ball.y, '#ff0000');
+                radio.playSFX(300, 'sawtooth', 0.25);
+                if (gs.scoreAI >= WIN_SCORE) {
+                  gs.over = true;
+                  if (winnerRef.current) winnerRef.current('AI');
+                } else {
+                  resetBall(gs, 1);
                 }
               }
-
-              // Paddle collision (Right / AI)
-              if (state.ballX >= canvas.width - 20 - state.paddleW && state.ballX <= canvas.width - 20) {
-                if (state.ballY >= state.aiY && state.ballY <= state.aiY + state.paddleH) {
-                  state.ballDX = -state.ballDX;
-                  audio.playTone(440, 'sine', 0.05);
+              if (gs.ball.x > W) {
+                gs.scoreP++;
+                burst(gs, W, gs.ball.y, '#00ff00');
+                radio.playSFX(659.25, 'sine', 0.15);
+                if (gs.scoreP >= WIN_SCORE) {
+                  gs.over = true;
+                  if (winnerRef.current) winnerRef.current('YOU');
+                } else {
+                  resetBall(gs, -1);
                 }
-              }
-
-              // Scoring / Game Over triggers
-              if (state.ballX < 0) {
-                state.gameOver = true;
-              }
-
-              if (state.ballX > canvas.width) {
-                // Return ball & give 3 points reward
-                state.ballX = canvas.width / 2;
-                state.ballDX = -3.5;
-                state.score += 3;
-                setScore(state.score);
-                audio.playWin();
-              }
-
-              if (state.gameOver) {
-                setGameState("over");
-                audio.playHit();
-                onSave(state.score, "Neon Pong");
-              }
-
-              // Draw Left Paddle
-              ctx.fillStyle = "#ff007f";
-              ctx.fillRect(20, state.playerY, state.paddleW, state.paddleH);
-
-              // Draw Right Paddle
-              ctx.fillStyle = "#00ffcc";
-              ctx.fillRect(canvas.width - 20 - state.paddleW, state.aiY, state.paddleW, state.paddleH);
-
-              // Draw Glowing Ball
-              ctx.fillStyle = "#fff";
-              ctx.shadowColor = "#00ffcc";
-              ctx.beginPath();
-              ctx.arc(state.ballX, state.ballY, 6, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.shadowColor = "transparent"; // Reset shadow
-
-            } else {
-              // Static Landing screen elements
-              ctx.fillStyle = "rgba(12, 5, 26, 0.85)";
-              ctx.fillRect(20, 35, canvas.width - 40, canvas.height - 70);
-              ctx.strokeStyle = "#00ffcc";
-              ctx.strokeRect(20, 35, canvas.width - 40, canvas.height - 70);
-
-              ctx.fillStyle = "#ffffff";
-              ctx.textAlign = "center";
-              ctx.font = '12px "Share Tech Mono", monospace';
-
-              if (gameState === "idle") {
-                ctx.fillText("NEON PONG v1.0", canvas.width / 2, 80);
-                ctx.fillStyle = "#ff007f";
-                ctx.fillText("TAP OR CLICK IN SCREEN TO START PLAY", canvas.width / 2, 140);
-                ctx.fillStyle = "gray";
-                ctx.fillText("STEER PADDLE VERTICALLY TO BOUNCE WAVEFORMS", canvas.width / 2, 190);
-              } else if (gameState === "over") {
-                ctx.fillStyle = "#ff007f";
-                ctx.fillText("CONNECTION RESET / POINT CONCEDED", canvas.width / 2, 80);
-                ctx.fillStyle = "#00ffcc";
-                ctx.fillText(`TOTAL POINTS: ${state.score}`, canvas.width / 2, 130);
-                ctx.fillStyle = "white";
-                ctx.fillText("TAP CONTAINER AREA TO RUN REBOOT", canvas.width / 2, 190);
               }
             }
 
-            animId = requestAnimationFrame(render);
-          };
+            ctx.fillStyle = '#05000f';
+            ctx.fillRect(0, 0, W, H);
 
-          render();
-          return () => cancelAnimationFrame(animId);
-        }, [gameState]);
+            ctx.setLineDash([10, 14]);
+            ctx.strokeStyle = 'rgba(255,0,255,0.25)';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+            ctx.setLineDash([]);
+
+            gs.particles = gs.particles.filter(p => {
+              p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+              if (p.life <= 0) return false;
+              ctx.globalAlpha = p.life;
+              ctx.fillStyle = p.color;
+              ctx.beginPath(); ctx.arc(p.x, p.y, 4 * p.life, 0, Math.PI * 2); ctx.fill();
+              ctx.globalAlpha = 1;
+              return true;
+            });
+
+            ctx.fillStyle = '#00ffff';
+            ctx.fillRect(20, gs.player.y, PADDLE_W, PADDLE_H);
+
+            ctx.fillStyle = '#ff00ff';
+            ctx.fillRect(W - 20 - PADDLE_W, gs.ai.y, PADDLE_W, PADDLE_H);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(gs.ball.x, gs.ball.y, BALL_R, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.font = 'bold 48px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#00ffff';
+            ctx.fillText(gs.scoreP, W / 2 - 80, 60);
+            ctx.fillStyle = '#ff00ff';
+            ctx.fillText(gs.scoreAI, W / 2 + 80, 60);
+
+            ctx.font = '11px monospace';
+            ctx.fillStyle = '#00ffff88';
+            ctx.fillText('YOU', W / 2 - 80, 78);
+            ctx.fillStyle = '#ff00ff88';
+            ctx.fillText('AI', W / 2 + 80, 78);
+
+            if (gs.over) {
+              ctx.fillStyle = 'rgba(0,0,0,0.5)';
+              ctx.fillRect(0, 0, W, H);
+            }
+
+            animRef.current = requestAnimationFrame(loop);
+          }
+
+          winnerRef.current = setWinner;
+          animRef.current = requestAnimationFrame(loop);
+          return () => {
+            cancelAnimationFrame(animRef.current);
+            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('keyup', onKey);
+          };
+        }, [initState]);
+
+        const winColor = winner === 'YOU' ? '#00ffff' : '#ff00ff';
 
         return (
-          <div className="flex-1 flex flex-col justify-between">
+          <div className="flex-1 flex flex-col justify-between min-h-[300px] relative">
             <div className="flex justify-between items-center text-xs mb-2">
-              <span className="text-gray-400">NEON PONG SIMULATOR</span>
-              <span className="text-[#00ffcc] font-bold">SCORE: {score}</span>
+              <span className="text-gray-400">NEON PONG</span>
+              <span className="text-[#00ffcc] font-bold">W/S or Up/Down arrows to steer paddle</span>
             </div>
-            <div 
-              onMouseMove={handleMouseMove}
-              onTouchMove={handleTouchMove}
-              onClick={() => { if (gameState !== "playing") resetGame(); }}
-              className="relative border-2 border-[#00ffcc]/50 bg-black flex-1 flex items-center justify-center cursor-pointer overflow-hidden"
-            >
-              <canvas ref={canvasRef} width={400} height={280} className="w-full aspect-[400/280] block" />
-            </div>
-            <div className="mt-2 text-center text-[11px] text-gray-500">
-              SLIDE MOUSE OR TOUCH DRAG ON MOBILE VERTICALLY TO STEER LEFT PADDLE
+
+            <div className="relative border-2 border-[#00ffff]/50 bg-black flex-1 flex items-center justify-center overflow-hidden">
+              <canvas ref={canvasRef} className="w-full aspect-[800/500] block" />
+
+              {winner && (
+                <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/60">
+                  <div className="bg-[#1a0033]/90 border-2 rounded-xl p-6 text-center" style={{ borderColor: winColor }}>
+                    <div className="text-3xl mb-1">{winner === 'YOU' ? '🏆' : '🤖'}</div>
+                    <div className="text-xl font-bold tracking-widest mb-1" style={{ color: winColor }}>
+                      {winner === 'YOU' ? 'YOU WIN!' : 'AI WINS!'}
+                    </div>
+                    <p className="text-gray-400 text-xs mb-4">
+                      {winner === 'YOU' ? 'Impressive moves, human.' : 'The machine is superior. Try again.'}
+                    </p>
+                    <button 
+                      onClick={restart} 
+                      className="px-6 py-2 rounded text-xs font-bold font-mono tracking-widest text-black uppercase transition-transform active:scale-95" 
+                      style={{ backgroundColor: winColor }}
+                    >
+                      PLAY AGAIN
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );
       }
 
-      // --- GAME 4: RETRO WORM (SNAKE) ---
-      function WormGame({ onSave, onAward }) {
+      // --- GAME 4: RETRO WORM (Realistic Earthworm Engine) ---
+      function WormGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
         const [score, setScore] = useState(0);
@@ -1092,7 +997,7 @@
           score: 0,
           gameOver: false,
           lastUpdate: 0,
-          speed: 120 // interval in milliseconds
+          speed: 170 // Decelerated from 130ms to 170ms for comfortable control pace
         });
 
         const resetGame = () => {
@@ -1105,16 +1010,15 @@
             score: 0,
             gameOver: false,
             lastUpdate: 0,
-            speed: 110
+            speed: 170 // Slower loop speed kept on restart
           };
           setScore(0);
           setGameState("playing");
-          audio.playCoin();
+          radio.playSFX(587.33, 'square', 0.15, 880);
         };
 
         const changeDirection = (newDx, newDy) => {
           const current = stateRef.current;
-          // Block 180 degree instant reversal
           if (newDx === -current.dx || newDy === -current.dy) return;
           current.dx = newDx;
           current.dy = newDy;
@@ -1147,29 +1051,16 @@
             ctx.fillStyle = "#02010c";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Tech terminal grid structure
-            ctx.strokeStyle = "rgba(0, 255, 120, 0.03)";
-            ctx.lineWidth = 1;
-            for (let x = 0; x < canvas.width; x += state.gridSize) {
-              ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-            }
-            for (let y = 0; y < canvas.height; y += state.gridSize) {
-              ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-            }
-
             if (gameState === "playing") {
               if (time - state.lastUpdate > state.speed) {
                 state.lastUpdate = time;
 
-                // Move head location
                 const head = { x: state.worm[0].x + state.dx, y: state.worm[0].y + state.dy };
 
-                // Boundaries collision
                 if (head.x < 0 || head.x >= cols || head.y < 0 || head.y >= rows) {
                   state.gameOver = true;
                 }
 
-                // Self collision check
                 state.worm.forEach(part => {
                   if (part.x === head.x && part.y === head.y) {
                     state.gameOver = true;
@@ -1179,15 +1070,11 @@
                 if (!state.gameOver) {
                   state.worm.unshift(head);
 
-                  // Eating food
                   if (head.x === state.food.x && head.y === state.food.y) {
                     state.score += 10;
                     setScore(state.score);
-                    audio.playPoint();
-                    if (state.score % 50 === 0) {
-                      onAward(1);
-                    }
-                    // Generate new food target coordinates
+                    radio.playSFX(880, 'sine', 0.08, 1200);
+
                     let foodPlaced = false;
                     while (!foodPlaced) {
                       const fx = Math.floor(Math.random() * cols);
@@ -1206,32 +1093,84 @@
 
               if (state.gameOver) {
                 setGameState("over");
-                audio.playHit();
-                onSave(state.score, "Retro Worm");
+                radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
-              // Draw Food (Flashing pink wire-packet)
-              const fx = state.food.x * state.gridSize;
-              const fy = state.food.y * state.gridSize;
-              ctx.fillStyle = "#ff007f";
-              ctx.strokeStyle = "#fff";
+              // --- Draw Organic Leaf Food Packet ---
+              const fx = state.food.x * state.gridSize + state.gridSize / 2;
+              const fy = state.food.y * state.gridSize + state.gridSize / 2;
+              
+              ctx.fillStyle = "#388e3c"; // Deep green
+              ctx.beginPath();
+              ctx.ellipse(fx, fy, 7, 5, Math.PI / 4, 0, Math.PI * 2);
+              ctx.fill();
+              
+              ctx.strokeStyle = "#1b5e20"; // Dark green stem
               ctx.lineWidth = 1.5;
-              ctx.fillRect(fx + 2, fy + 2, state.gridSize - 4, state.gridSize - 4);
-              ctx.strokeRect(fx + 2, fy + 2, state.gridSize - 4, state.gridSize - 4);
+              ctx.beginPath();
+              ctx.moveTo(fx - 4, fy + 4);
+              ctx.lineTo(fx - 8, fy + 8);
+              ctx.stroke();
 
-              // Draw Glowing Cyber Worm Segments
-              state.worm.forEach((part, idx) => {
-                const wx = part.x * state.gridSize;
-                const wy = part.y * state.gridSize;
-                ctx.fillStyle = idx === 0 ? "#ffffff" : "#00ffcc";
-                ctx.strokeStyle = "#000000";
+              // --- Draw Segmented Earthworm (Tail to Head) ---
+              for (let i = state.worm.length - 1; i >= 0; i--) {
+                const part = state.worm[i];
+                const wx = part.x * state.gridSize + state.gridSize / 2;
+                const wy = part.y * state.gridSize + state.gridSize / 2;
+
+                let radius = state.gridSize / 2 - 1.5;
+                if (i > state.worm.length - 5) {
+                  const tailStep = (state.worm.length - 1 - i) / 4;
+                  radius = (state.gridSize / 2 - 1.5) * (0.55 + tailStep * 0.45);
+                }
+
+                const isClitellum = i >= 4 && i <= 6;
+                if (isClitellum) {
+                  radius += 1.8;
+                }
+
+                let color = "#ff9a8b";
+                if (i === 0) {
+                  color = "#ff6b6b"; // Head red
+                } else if (isClitellum) {
+                  color = "#ffb0a0"; // Clitellum
+                } else {
+                  color = i % 2 === 0 ? "#f08080" : "#ff8a80";
+                }
+
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(wx, wy, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
                 ctx.lineWidth = 1;
-                ctx.fillRect(wx + 1, wy + 1, state.gridSize - 2, state.gridSize - 2);
-                ctx.strokeRect(wx + 1, wy + 1, state.gridSize - 2, state.gridSize - 2);
-              });
+                ctx.beginPath();
+                ctx.arc(wx, wy, radius - 2, 0, Math.PI * 2);
+                ctx.stroke();
+
+                if (i === 0) {
+                  let eyeX1 = wx - 3, eyeY1 = wy - 3;
+                  let eyeX2 = wx + 3, eyeY2 = wy - 3;
+                  if (state.dx === 1) { // Right
+                    eyeX1 = wx + 2; eyeY1 = wy - 3;
+                    eyeX2 = wx + 2; eyeY2 = wy + 3;
+                  } else if (state.dx === -1) { // Left
+                    eyeX1 = wx - 2; eyeY1 = wy - 3;
+                    eyeX2 = wx - 2; eyeY2 = wy + 3;
+                  } else if (state.dy === 1) { // Down
+                    eyeX1 = wx - 3; eyeY1 = wy + 2;
+                    eyeX2 = wx + 3; eyeY2 = wy + 2;
+                  }
+                  ctx.fillStyle = "#000000";
+                  ctx.beginPath();
+                  ctx.arc(eyeX1, eyeY1, 1.3, 0, Math.PI * 2);
+                  ctx.arc(eyeX2, eyeY2, 1.3, 0, Math.PI * 2);
+                  ctx.fill();
+                }
+              }
 
             } else {
-              // Menu Stage overlays
               ctx.fillStyle = "rgba(12, 5, 26, 0.85)";
               ctx.fillRect(20, 30, canvas.width - 40, canvas.height - 60);
               ctx.strokeStyle = "#00ffcc";
@@ -1242,18 +1181,14 @@
               ctx.font = '12px "Share Tech Mono", monospace';
 
               if (gameState === "idle") {
-                ctx.fillText("RETRO WORM ENGINE v1.0", canvas.width / 2, 80);
-                ctx.fillStyle = "#ff007f";
-                ctx.fillText("CLICK HERE / TAP GAME TO START GAME", canvas.width / 2, 140);
-                ctx.fillStyle = "gray";
-                ctx.fillText("USE WASD OR ARROW KEYS TO NAVIGATE ROUTE", canvas.width / 2, 190);
+                ctx.fillText("TAP SCREEN TO START WORM RUN", canvas.width / 2, 140);
               } else if (gameState === "over") {
                 ctx.fillStyle = "#ff007f";
-                ctx.fillText("CRITICAL WORM SEGFAULT EXCEPTION", canvas.width / 2, 80);
+                ctx.fillText("WORM COLLISION EXCEPTION", canvas.width / 2, 80);
                 ctx.fillStyle = "#00ffcc";
-                ctx.fillText(`SCORE ACCUMULATED: ${state.score}`, canvas.width / 2, 130);
+                ctx.fillText(`SCORE: ${state.score}`, canvas.width / 2, 130);
                 ctx.fillStyle = "white";
-                ctx.fillText("TAP SCREEN TO RETRY RUN CONNECTION", canvas.width / 2, 190);
+                ctx.fillText("TAP SCREEN TO RETRY", canvas.width / 2, 190);
               }
             }
 
@@ -1267,35 +1202,32 @@
         return (
           <div className="flex-1 flex flex-col justify-between">
             <div className="flex justify-between items-center text-xs mb-2">
-              <span className="text-gray-400">RETRO WORM TERMINAL</span>
+              <span className="text-gray-400">RETRO WORM</span>
               <span className="text-white font-bold">SCORE: {score}</span>
             </div>
             <div 
               onClick={() => { if (gameState !== "playing") resetGame(); }}
               className="relative border-2 border-[#ff007f]/50 bg-black flex-1 flex items-center justify-center cursor-pointer"
             >
-              <canvas ref={canvasRef} width={400} height={280} className="w-full aspect-[400/280] block" />
+              <canvas ref={canvasRef} width={400} height={250} className="w-full aspect-[400/250] block" />
             </div>
-            {/* On Screen D-Pad controllers for mobile convenience */}
-            <div className="mt-2 grid grid-cols-3 gap-1 max-w-[150px] mx-auto text-xs md:hidden">
+
+            {/* Mobile Touch Controller layout */}
+            <div className="mt-2 grid grid-cols-3 gap-1 max-w-[120px] mx-auto text-xs md:hidden">
               <div></div>
               <button onClick={(e) => { e.stopPropagation(); changeDirection(0, -1); }} className="bg-[#110924] border border-[#00ffcc] py-1 text-center font-bold">▲</button>
               <div></div>
               <button onClick={(e) => { e.stopPropagation(); changeDirection(-1, 0); }} className="bg-[#110924] border border-[#00ffcc] py-1 text-center font-bold">◀</button>
-              <button onClick={(e) => { e.stopPropagation(); if (gameState !== "playing") resetGame(); }} className="bg-[#ff007f] text-black py-1 text-center font-bold text-[9px] uppercase">RST</button>
+              <button onClick={(e) => { e.stopPropagation(); if (gameState !== "playing") resetGame(); }} className="bg-[#ff007f] text-black py-1 text-center font-bold text-[9px]">RST</button>
               <button onClick={(e) => { e.stopPropagation(); changeDirection(1, 0); }} className="bg-[#110924] border border-[#00ffcc] py-1 text-center font-bold">▶</button>
               <div></div>
               <button onClick={(e) => { e.stopPropagation(); changeDirection(0, 1); }} className="bg-[#110924] border border-[#00ffcc] py-1 text-center font-bold">▼</button>
               <div></div>
             </div>
-            <div className="mt-2 text-center text-[11px] text-gray-500 hidden md:block">
-              NAVIGATE THE WORM VIA ARROW KEYS OR W/A/S/D CONTROL SCHEME
-            </div>
           </div>
         );
       }
 
-      // Render App inside div ID root
       const root = ReactDOM.createRoot(document.getElementById("root"));
       root.render(<App />);
     </script>
