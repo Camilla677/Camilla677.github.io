@@ -293,7 +293,7 @@
         );
       }
 
-      // --- GAME 1: FLAPPY BIRD ---
+      // --- GAME 1: FLAPPY BIRD (Scaled down to be smaller & more forgiving) ---
       function FlappyBirdGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
@@ -423,9 +423,11 @@
                   radio.playSFX(880, 'sine', 0.08, 1200);
                 }
 
+                // Collision detection adjusted to 7px radius for the smaller bird size
+                const bRadius = 7;
                 if (
-                  (50 + 10 > p.x && 50 - 10 < p.x + p.width) &&
-                  (state.birdY - 10 < p.topHeight || state.birdY + 10 > p.bottomY)
+                  (50 + bRadius > p.x && 50 - bRadius < p.x + p.width) &&
+                  (state.birdY - bRadius < p.topHeight || state.birdY + bRadius > p.bottomY)
                 ) {
                   state.gameOver = true;
                 }
@@ -444,18 +446,19 @@
                 radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
+              // Render smaller bird coordinates (scaled down by ~30%)
               ctx.save();
               ctx.translate(50, state.birdY);
               const angle = Math.min(Math.max(state.velocity * 0.08, -0.6), 0.8);
               ctx.rotate(angle);
               ctx.fillStyle = "#00ffcc";
               ctx.strokeStyle = "#fff";
-              ctx.lineWidth = 1.5;
+              ctx.lineWidth = 1.2;
               ctx.beginPath();
-              ctx.moveTo(12, 0);
-              ctx.lineTo(-10, -10);
-              ctx.lineTo(-6, 0);
-              ctx.lineTo(-10, 10);
+              ctx.moveTo(8, 0);       // Head point (was 12)
+              ctx.lineTo(-7, -7);     // Upper back tail (was -10, -10)
+              ctx.lineTo(-4, 0);      // Middle recess (was -6, 0)
+              ctx.lineTo(-7, 7);      // Lower back tail (was -10, 10)
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
@@ -475,16 +478,17 @@
               ctx.fillStyle = "#ff007f";
               ctx.fillText(countdown, canvas.width / 2, 165);
 
+              // Render stationary smaller bird
               ctx.save();
               ctx.translate(50, state.birdY);
               ctx.fillStyle = "#00ffcc";
               ctx.strokeStyle = "#fff";
-              ctx.lineWidth = 1.5;
+              ctx.lineWidth = 1.2;
               ctx.beginPath();
-              ctx.moveTo(12, 0);
-              ctx.lineTo(-10, -10);
-              ctx.lineTo(-6, 0);
-              ctx.lineTo(-10, 10);
+              ctx.moveTo(8, 0);
+              ctx.lineTo(-7, -7);
+              ctx.lineTo(-4, 0);
+              ctx.lineTo(-7, 7);
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
@@ -982,7 +986,7 @@
         );
       }
 
-      // --- GAME 4: RETRO WORM (Realistic Earthworm Engine) ---
+      // --- GAME 4: RETRO WORM ---
       function WormGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
@@ -997,7 +1001,7 @@
           score: 0,
           gameOver: false,
           lastUpdate: 0,
-          speed: 170 // Decelerated from 130ms to 170ms for comfortable control pace
+          speed: 170
         });
 
         const resetGame = () => {
@@ -1010,7 +1014,7 @@
             score: 0,
             gameOver: false,
             lastUpdate: 0,
-            speed: 170 // Slower loop speed kept on restart
+            speed: 170
           };
           setScore(0);
           setGameState("playing");
@@ -1096,23 +1100,21 @@
                 radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
-              // --- Draw Organic Leaf Food Packet ---
               const fx = state.food.x * state.gridSize + state.gridSize / 2;
               const fy = state.food.y * state.gridSize + state.gridSize / 2;
               
-              ctx.fillStyle = "#388e3c"; // Deep green
+              ctx.fillStyle = "#388e3c";
               ctx.beginPath();
               ctx.ellipse(fx, fy, 7, 5, Math.PI / 4, 0, Math.PI * 2);
               ctx.fill();
               
-              ctx.strokeStyle = "#1b5e20"; // Dark green stem
+              ctx.strokeStyle = "#1b5e20";
               ctx.lineWidth = 1.5;
               ctx.beginPath();
               ctx.moveTo(fx - 4, fy + 4);
               ctx.lineTo(fx - 8, fy + 8);
               ctx.stroke();
 
-              // --- Draw Segmented Earthworm (Tail to Head) ---
               for (let i = state.worm.length - 1; i >= 0; i--) {
                 const part = state.worm[i];
                 const wx = part.x * state.gridSize + state.gridSize / 2;
@@ -1131,9 +1133,9 @@
 
                 let color = "#ff9a8b";
                 if (i === 0) {
-                  color = "#ff6b6b"; // Head red
+                  color = "#ff6b6b";
                 } else if (isClitellum) {
-                  color = "#ffb0a0"; // Clitellum
+                  color = "#ffb0a0";
                 } else {
                   color = i % 2 === 0 ? "#f08080" : "#ff8a80";
                 }
@@ -1152,13 +1154,13 @@
                 if (i === 0) {
                   let eyeX1 = wx - 3, eyeY1 = wy - 3;
                   let eyeX2 = wx + 3, eyeY2 = wy - 3;
-                  if (state.dx === 1) { // Right
+                  if (state.dx === 1) {
                     eyeX1 = wx + 2; eyeY1 = wy - 3;
                     eyeX2 = wx + 2; eyeY2 = wy + 3;
-                  } else if (state.dx === -1) { // Left
+                  } else if (state.dx === -1) {
                     eyeX1 = wx - 2; eyeY1 = wy - 3;
                     eyeX2 = wx - 2; eyeY2 = wy + 3;
-                  } else if (state.dy === 1) { // Down
+                  } else if (state.dy === 1) {
                     eyeX1 = wx - 3; eyeY1 = wy + 2;
                     eyeX2 = wx + 3; eyeY2 = wy + 2;
                   }
@@ -1212,7 +1214,6 @@
               <canvas ref={canvasRef} width={400} height={250} className="w-full aspect-[400/250] block" />
             </div>
 
-            {/* Mobile Touch Controller layout */}
             <div className="mt-2 grid grid-cols-3 gap-1 max-w-[120px] mx-auto text-xs md:hidden">
               <div></div>
               <button onClick={(e) => { e.stopPropagation(); changeDirection(0, -1); }} className="bg-[#110924] border border-[#00ffcc] py-1 text-center font-bold">▲</button>
