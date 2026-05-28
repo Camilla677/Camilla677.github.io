@@ -1,235 +1,669 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-const W = 800, H = 500;
-const PADDLE_W = 12, PADDLE_H = 80;
-const BALL_R = 8;
-const WIN_SCORE = 7;
-const AI_SPEED = 4;
+const GRAVITY = 0.8;
+const JUMP_VELOCITY = -18;
+const BASE_SPEED = 6;
+const CAR_LEFT = 80;
+const CAR_WIDTH = 90;
+const CAR_HEIGHT = 38;
 
-export default function Pong() {
+
+
+// High score helpers
+function getHighScores() {
+  try { return JSON.parse(localStorage.getItem('y2k_scores') || '[]'); } catch { return []; }
+}
+function saveHighScore(score) {
+  const scores = getHighScores();
+  scores.push(Math.floor(score));
+  scores.sort((a, b) => b - a);
+  const top5 = scores.slice(0, 5);
+  localStorage.setItem('y2k_scores', JSON.stringify(top5));
+  return top5;
+}
+
+// Obstacle types with randomized variants
+function makeObstacle(x) {
+  const roll = Math.random();
+  // Randomize size within each type
+  if (roll < 0.35) {
+    const h = 50 + Math.floor(Math.random() * 35); // 50-85
+    return { x, w: 16 + Math.floor(Math.random() * 10), h, color: 'fence', phase: Math.random() * Math.PI * 2 };
+  } else if (roll < 0.65) {
+    const w = 44 + Math.floor(Math.random() * 24); // 44-68
+    const h = 28 + Math.floor(Math.random() * 18); // 28-46
+    return { x, w, h, color: 'wrecked', phase: Math.random() * Math.PI * 2 };
+  } else if (roll < 0.85) {
+    const h = 40 + Math.floor(Math.random() * 28); // 40-68
+    return { x, w: 32 + Math.floor(Math.random() * 14), h, color: 'barrier', phase: Math.random() * Math.PI * 2 };
+  } else {
+    // Rare: tall spike / alien pillar
+    return { x, w: 14, h: 90 + Math.floor(Math.random() * 20), color: 'spike', phase: Math.random() * Math.PI * 2 };
+  }
+}
+
+export default function Game() {
   const canvasRef = useRef(null);
-  const stateRef = useRef(null);
-  const animRef = useRef(null);
-  const keysRef = useRef({});
-  const [winner, setWinner] = useState(null);
-  const winnerRef = useRef(null);
+  const gameStateRef = useRef(null);
+  const animFrameRef = useRef(null);
+  const [gameOverScreen, setGameOverScreen] = useState(null); // {score, scores}
+  const showGameOverRef = useRef(null);
 
   const initState = useCallback(() => ({
-    ball: { x: W / 2, y: H / 2, vx: (Math.random() > 0.5 ? 1 : -1) * 5, vy: (Math.random() - 0.5) * 6 },
-    player: { y: H / 2 - PADDLE_H / 2 },
-    ai: { y: H / 2 - PADDLE_H / 2 },
-    scoreP: 0, scoreAI: 0,
-    over: false,
-    particles: [],
+    positionY: 0,
+    velocity: 0,
+    isJumping: false,
+    score: 0,
+    speed: BASE_SPEED,
+    gameOver: false,
+    obstacles: [],
+    lastSpawn: 0,
+    nextSpawn: 80,
+    stars: Array.from({ length: 200 }, () => ({
+      x: Math.random() * 100,
+      y: Math.random() * 72,
+      size: Math.random() * 3 + 0.8,
+      delay: Math.random() * 5,
+    })),
+    shootingStars: [],
+    lastShootingStar: 0,
+    exhaustParticles: [],
   }), []);
 
+  const jump = useCallback(() => {
+    const gs = gameStateRef.current;
+    if (!gs || gs.isJumping || gs.gameOver) return;
+    gs.isJumping = true;
+    gs.velocity = JUMP_VELOCITY;
+  }, []);
+
   const restart = useCallback(() => {
-    stateRef.current = initState();
-    setWinner(null);
+    gameStateRef.current = initState();
+    setGameOverScreen(null);
   }, [initState]);
 
   useEffect(() => {
-    stateRef.current = initState();
+    gameStateRef.current = initState();
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    canvas.width = W;
-    canvas.height = H;
 
-    const onKey = (e) => { keysRef.current[e.code] = e.type === 'keydown'; };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKey);
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
 
-    function resetBall(gs, dir) {
-      gs.ball = { x: W / 2, y: H / 2, vx: dir * (4.5 + Math.random()), vy: (Math.random() - 0.5) * 6 };
+    const handleKey = (e) => {
+      if (e.code === 'Space' || e.code === 'ArrowUp') {
+        e.preventDefault();
+        const gs = gameStateRef.current;
+        if (gs.gameOver) restart();
+        else jump();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    // ─── Drawing helpers ───────────────────────────────────────────
+
+    function drawStar(s, time) {
+      const opacity = 0.35 + 0.65 * Math.abs(Math.sin((time / 3200 + s.delay) * Math.PI));
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = 'white';
+      ctx.shadowColor = 'white';
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc((s.x / 100) * canvas.width, (s.y / 100) * canvas.height, s.size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
     }
 
-    function burst(gs, x, y, color) {
-      for (let i = 0; i < 12; i++) {
-        gs.particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 1, color });
+    function drawSportsCar(x, y) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(0.65, 0.65);
+      ctx.translate(-x, -y);
+      ctx.shadowColor = '#ff44ff';
+      ctx.shadowBlur = 24;
+
+      // --- Low wide body ---
+      ctx.fillStyle = '#9900bb';
+      ctx.beginPath();
+      ctx.moveTo(x + 10, y + 38);
+      ctx.lineTo(x + 6, y + 46);
+      ctx.lineTo(x + 134, y + 46);
+      ctx.lineTo(x + 138, y + 38);
+      ctx.lineTo(x + 128, y + 20);
+      // cabin cutout top line
+      ctx.lineTo(x + 100, y + 10);
+      ctx.lineTo(x + 40, y + 10);
+      ctx.lineTo(x + 12, y + 20);
+      ctx.closePath();
+      ctx.fill();
+
+      // --- Cabin glass ---
+      ctx.fillStyle = 'rgba(0,255,255,0.45)';
+      ctx.beginPath();
+      ctx.moveTo(x + 42, y + 11);
+      ctx.lineTo(x + 38, y + 26);
+      ctx.lineTo(x + 100, y + 26);
+      ctx.lineTo(x + 98, y + 11);
+      ctx.closePath();
+      ctx.fill();
+
+      // --- Body stripe ---
+      ctx.strokeStyle = '#ff44ff';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#ff44ff';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(x + 14, y + 32);
+      ctx.lineTo(x + 126, y + 32);
+      ctx.stroke();
+
+      // --- Spoiler ---
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.moveTo(x + 10, y + 18);
+      ctx.lineTo(x + 10, y + 8);
+      ctx.lineTo(x + 30, y + 8);
+      ctx.stroke();
+
+      // --- Air intakes (front) ---
+      ctx.fillStyle = '#220022';
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 6;
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(x + 120 + i * 5, y + 28, 3, 8);
+        ctx.strokeRect(x + 120 + i * 5, y + 28, 3, 8);
+      }
+
+      // --- Headlight ---
+      ctx.shadowColor = '#ffffaa';
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = '#ffffcc';
+      ctx.beginPath();
+      ctx.ellipse(x + 133, y + 28, 5, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // beam
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = '#ffffaa';
+      ctx.beginPath();
+      ctx.moveTo(x + 136, y + 20);
+      ctx.lineTo(x + 200, y + 15);
+      ctx.lineTo(x + 200, y + 42);
+      ctx.lineTo(x + 136, y + 37);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // --- Tail light ---
+      ctx.shadowColor = '#ff2200';
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = '#ff3300';
+      ctx.beginPath();
+      ctx.ellipse(x + 8, y + 28, 4, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // --- Neon undercarriage glow ---
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = '#ff00ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + 22, y + 46);
+      ctx.lineTo(x + 118, y + 46);
+      ctx.stroke();
+
+      // --- Wheels ---
+      const wheelPositions = [x + 30, x + 108];
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 12;
+      for (const wx of wheelPositions) {
+        ctx.fillStyle = '#0a0a0a';
+        ctx.beginPath();
+        ctx.arc(wx, y + 50, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        // rim spokes
+        ctx.strokeStyle = '#888';
+        ctx.lineWidth = 1.5;
+        ctx.shadowBlur = 0;
+        for (let sp = 0; sp < 6; sp++) {
+          const angle = (sp / 6) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(wx, y + 50);
+          ctx.lineTo(wx + Math.cos(angle) * 10, y + 50 + Math.sin(angle) * 10);
+          ctx.stroke();
+        }
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.arc(wx, y + 50, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
+    function drawObstacle(o, time) {
+      const bob = Math.sin(time / 850 + o.phase) * 5;
+      const rot = Math.sin(time / 850 + o.phase) * 2.5 * (Math.PI / 180);
+      const baseY = canvas.height - 6 - o.h - 52;
+      ctx.save();
+      ctx.translate(o.x + o.w / 2, baseY + o.h / 2 + bob);
+      ctx.rotate(rot);
+
+      if (o.color === 'fence') {
+        const g = ctx.createLinearGradient(-o.w / 2, -o.h / 2, o.w / 2, o.h / 2);
+        for (let i = 0; i <= 10; i++) g.addColorStop(i / 10, i % 2 === 0 ? '#00ffff' : '#ff00ff');
+        ctx.fillStyle = g;
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 14;
+        ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        // cross hatching
+        ctx.beginPath();
+        for (let yy = -o.h / 2; yy < o.h / 2; yy += 10) {
+          ctx.moveTo(-o.w / 2, yy);
+          ctx.lineTo(o.w / 2, yy);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      } else if (o.color === 'wrecked') {
+        ctx.fillStyle = '#1a001a';
+        ctx.shadowColor = '#ff00ff';
+        ctx.shadowBlur = 16;
+        ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        ctx.strokeStyle = '#ff00ff';
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        // X detail
+        ctx.beginPath();
+        ctx.moveTo(-o.w / 2 + 4, -o.h / 2 + 4);
+        ctx.lineTo(o.w / 2 - 4, o.h / 2 - 4);
+        ctx.moveTo(o.w / 2 - 4, -o.h / 2 + 4);
+        ctx.lineTo(-o.w / 2 + 4, o.h / 2 - 4);
+        ctx.strokeStyle = '#ff00ff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (o.color === 'barrier') {
+        const g = ctx.createLinearGradient(0, -o.h / 2, 0, o.h / 2);
+        g.addColorStop(0, '#ffee00');
+        g.addColorStop(0.5, '#ff8800');
+        g.addColorStop(1, '#ff4400');
+        ctx.fillStyle = g;
+        ctx.shadowColor = '#ffcc00';
+        ctx.shadowBlur = 16;
+        ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        // warning stripes
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        for (let yy = -o.h / 2 + 6; yy < o.h / 2; yy += 10) {
+          ctx.beginPath();
+          ctx.moveTo(-o.w / 2, yy);
+          ctx.lineTo(o.w / 2, yy);
+          ctx.stroke();
+        }
+      } else if (o.color === 'spike') {
+        const g = ctx.createLinearGradient(0, -o.h / 2, 0, o.h / 2);
+        g.addColorStop(0, '#ff00aa');
+        g.addColorStop(1, '#440022');
+        ctx.fillStyle = g;
+        ctx.shadowColor = '#ff00aa';
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.moveTo(0, -o.h / 2);
+        ctx.lineTo(o.w / 2, o.h / 2);
+        ctx.lineTo(-o.w / 2, o.h / 2);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
+    function spawnObstacles(gs) {
+      const roll = Math.random();
+      const baseX = canvas.width + 60;
+      // 15% chance: spawn a cluster of 2
+      if (roll < 0.15 && gs.score > 200) {
+        const o1 = makeObstacle(baseX);
+        const o2 = makeObstacle(baseX + o1.w + 12 + Math.random() * 20);
+        gs.obstacles.push(o1, o2);
+      } else {
+        gs.obstacles.push(makeObstacle(baseX));
       }
     }
 
+    // ─── Main loop ───────────────────────────────────────────────────
     let lastTime = performance.now();
     function loop(time) {
-      const gs = stateRef.current;
+      const gs = gameStateRef.current;
       const dt = Math.min((time - lastTime) / 16.67, 2);
       lastTime = time;
 
-      if (!gs.over) {
-        // Player input
-        const speed = 6;
-        if (keysRef.current['ArrowUp'] || keysRef.current['KeyW']) gs.player.y -= speed * dt;
-        if (keysRef.current['ArrowDown'] || keysRef.current['KeyS']) gs.player.y += speed * dt;
-        gs.player.y = Math.max(0, Math.min(H - PADDLE_H, gs.player.y));
+      // Background
+      const bg = ctx.createRadialGradient(canvas.width * 0.5, canvas.height * 0.28, 0, canvas.width * 0.5, canvas.height * 0.28, canvas.width * 0.75);
+      bg.addColorStop(0, '#2a004d');
+      bg.addColorStop(0.5, '#0a0014');
+      bg.addColorStop(1, '#000005');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // AI
-        const aiCenter = gs.ai.y + PADDLE_H / 2;
-        if (aiCenter < gs.ball.y - 10) gs.ai.y += AI_SPEED * dt;
-        else if (aiCenter > gs.ball.y + 10) gs.ai.y -= AI_SPEED * dt;
-        gs.ai.y = Math.max(0, Math.min(H - PADDLE_H, gs.ai.y));
-
-        // Ball
-        gs.ball.x += gs.ball.vx * dt;
-        gs.ball.y += gs.ball.vy * dt;
-
-        // Top/bottom bounce
-        if (gs.ball.y - BALL_R < 0) { gs.ball.y = BALL_R; gs.ball.vy *= -1; }
-        if (gs.ball.y + BALL_R > H) { gs.ball.y = H - BALL_R; gs.ball.vy *= -1; }
-
-        // Player paddle (left)
-        const px = 20;
-        if (gs.ball.vx < 0 && gs.ball.x - BALL_R < px + PADDLE_W && gs.ball.x + BALL_R > px &&
-            gs.ball.y > gs.player.y && gs.ball.y < gs.player.y + PADDLE_H) {
-          gs.ball.x = px + PADDLE_W + BALL_R;
-          const rel = (gs.ball.y - (gs.player.y + PADDLE_H / 2)) / (PADDLE_H / 2);
-          gs.ball.vy = rel * 7;
-          gs.ball.vx = Math.abs(gs.ball.vx) * 1.05;
-          burst(gs, px + PADDLE_W, gs.ball.y, '#00ffff');
-        }
-
-        // AI paddle (right)
-        const ax = W - 20 - PADDLE_W;
-        if (gs.ball.vx > 0 && gs.ball.x + BALL_R > ax && gs.ball.x - BALL_R < ax + PADDLE_W &&
-            gs.ball.y > gs.ai.y && gs.ball.y < gs.ai.y + PADDLE_H) {
-          gs.ball.x = ax - BALL_R;
-          const rel = (gs.ball.y - (gs.ai.y + PADDLE_H / 2)) / (PADDLE_H / 2);
-          gs.ball.vy = rel * 7;
-          gs.ball.vx = -Math.abs(gs.ball.vx) * 1.05;
-          burst(gs, ax, gs.ball.y, '#ff00ff');
-        }
-
-        // Scoring
-        if (gs.ball.x < 0) {
-          gs.scoreAI++;
-          burst(gs, 0, gs.ball.y, '#ff0000');
-          if (gs.scoreAI >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('AI'); }
-          else resetBall(gs, 1);
-        }
-        if (gs.ball.x > W) {
-          gs.scoreP++;
-          burst(gs, W, gs.ball.y, '#00ff00');
-          if (gs.scoreP >= WIN_SCORE) { gs.over = true; if (winnerRef.current) winnerRef.current('YOU'); }
-          else resetBall(gs, -1);
-        }
+      // Sun
+      const sunX = canvas.width * 0.72;
+      const sunY = canvas.height * 0.22;
+      const sunPulse = Math.sin(time / 900) * 5;
+      const sunR = 54 + sunPulse;
+      // rays
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2 + time / 4000;
+        const inner = sunR + 10;
+        const outer = sunR + 28 + Math.sin(time / 600 + i) * 8;
+        ctx.save();
+        ctx.strokeStyle = '#ff6600';
+        ctx.shadowColor = '#ff4400';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath();
+        ctx.moveTo(sunX + Math.cos(angle) * inner, sunY + Math.sin(angle) * inner);
+        ctx.lineTo(sunX + Math.cos(angle) * outer, sunY + Math.sin(angle) * outer);
+        ctx.stroke();
+        ctx.restore();
       }
-
-      // Draw background
-      ctx.fillStyle = '#05000f';
-      ctx.fillRect(0, 0, W, H);
-
-      // Center dashed line
-      ctx.setLineDash([10, 14]);
-      ctx.strokeStyle = 'rgba(255,0,255,0.25)';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Particles
-      gs.particles = gs.particles.filter(p => {
-        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
-        if (p.life <= 0) return false;
-        ctx.globalAlpha = p.life;
-        ctx.fillStyle = p.color;
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 8;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 4 * p.life, 0, Math.PI * 2); ctx.fill();
-        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-        return true;
-      });
-
-      // Player paddle
-      ctx.fillStyle = '#00ffff';
-      ctx.shadowColor = '#00ffff';
-      ctx.shadowBlur = 18;
-      ctx.fillRect(20, gs.player.y, PADDLE_W, PADDLE_H);
-
-      // AI paddle
-      ctx.fillStyle = '#ff00ff';
-      ctx.shadowColor = '#ff00ff';
-      ctx.fillRect(W - 20 - PADDLE_W, gs.ai.y, PADDLE_W, PADDLE_H);
-
-      // Ball
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowColor = '#ffffff';
-      ctx.shadowBlur = 20;
+      // glow halo
+      const halo = ctx.createRadialGradient(sunX, sunY, sunR * 0.5, sunX, sunY, sunR * (2.8 + Math.sin(time / 900) * 0.15));
+      halo.addColorStop(0, 'rgba(255,100,0,0.18)');
+      halo.addColorStop(1, 'transparent');
+      ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(gs.ball.x, gs.ball.y, BALL_R, 0, Math.PI * 2);
+      ctx.arc(sunX, sunY, sunR * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+      // sun body gradient
+      const sunGrad = ctx.createRadialGradient(sunX - sunR * 0.3, sunY - sunR * 0.3, 0, sunX, sunY, sunR);
+      sunGrad.addColorStop(0, '#fffaaa');
+      sunGrad.addColorStop(0.4, '#ffcc00');
+      sunGrad.addColorStop(0.75, '#ff6600');
+      sunGrad.addColorStop(1, '#cc2200');
+      ctx.fillStyle = sunGrad;
+      ctx.shadowColor = '#ff6600';
+      ctx.shadowBlur = 30;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Scores
-      ctx.font = 'bold 48px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#00ffff';
-      ctx.shadowColor = '#00ffff';
-      ctx.shadowBlur = 14;
-      ctx.fillText(gs.scoreP, W / 2 - 80, 60);
-      ctx.fillStyle = '#ff00ff';
-      ctx.shadowColor = '#ff00ff';
-      ctx.fillText(gs.scoreAI, W / 2 + 80, 60);
-      ctx.shadowBlur = 0;
+      // Stars
+      gs.stars.forEach(s => drawStar(s, time));
 
-      // Labels
-      ctx.font = '11px monospace';
-      ctx.fillStyle = '#00ffff88';
-      ctx.fillText('YOU', W / 2 - 80, 78);
-      ctx.fillStyle = '#ff00ff88';
-      ctx.fillText('AI', W / 2 + 80, 78);
+      // Shooting stars
+      gs.lastShootingStar += dt;
+      if (gs.lastShootingStar > 38 && Math.random() > 0.3) {
+        gs.lastShootingStar = 0;
+        gs.shootingStars.push({ x: Math.random() * canvas.width * 0.7, y: Math.random() * canvas.height * 0.4, age: 0, dur: Math.random() * 1.1 + 0.8 });
+      }
+      gs.shootingStars = gs.shootingStars.filter(ss => {
+        ss.age += dt / 60;
+        if (ss.age > ss.dur) return false;
+        const p = ss.age / ss.dur;
+        const sx = ss.x + p * 900, sy = ss.y + p * 450;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(26 * Math.PI / 180);
+        ctx.globalAlpha = (p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1) * 0.85;
+        const lg = ctx.createLinearGradient(-70, 0, 70, 0);
+        lg.addColorStop(0, 'transparent');
+        lg.addColorStop(0.5, '#a0f0ff');
+        lg.addColorStop(1, 'transparent');
+        ctx.strokeStyle = lg;
+        ctx.shadowColor = '#a0f0ff';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-70, 0);
+        ctx.lineTo(70, 0);
+        ctx.stroke();
+        ctx.restore();
+        return true;
+      });
 
-      if (gs.over) {
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(0, 0, W, H);
+      // Road grid lines (perspective) 
+      ctx.globalAlpha = 0.07;
+      ctx.strokeStyle = '#ff00ff';
+      ctx.lineWidth = 1;
+      const roadY = canvas.height - 6;
+      const horizon = canvas.height * 0.65;
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12;
+        const rx = canvas.width * t;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2 + (rx - canvas.width / 2) * 0.1, horizon);
+        ctx.lineTo(rx, roadY);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      if (!gs.gameOver) {
+        // Physics
+        if (gs.isJumping) {
+          gs.velocity += GRAVITY * dt;
+          gs.positionY += gs.velocity * dt;
+          if (gs.positionY >= 0) { gs.positionY = 0; gs.isJumping = false; }
+        }
+
+        gs.speed = BASE_SPEED + Math.min(10, gs.score / 300);
+
+        // Exhaust particles
+        if (Math.random() > 0.5) {
+          const carY = canvas.height - 6 - 52 - CAR_HEIGHT + gs.positionY;
+          gs.exhaustParticles.push({
+            x: CAR_LEFT + 4,
+            y: carY + 26,
+            vx: -(1.5 + Math.random() * 2),
+            vy: (Math.random() - 0.5) * 1.2,
+            life: 1,
+            size: 3 + Math.random() * 4,
+          });
+        }
+        gs.exhaustParticles = gs.exhaustParticles.filter(p => {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= 0.04 * dt;
+          if (p.life <= 0) return false;
+          ctx.globalAlpha = p.life * 0.6;
+          ctx.fillStyle = `hsl(${300 + p.life * 60}, 100%, 70%)`;
+          ctx.shadowColor = '#ff00ff';
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.shadowBlur = 0;
+          return true;
+        });
+
+        // Spawn
+        gs.lastSpawn += dt;
+        if (gs.lastSpawn > gs.nextSpawn) {
+          gs.lastSpawn = 0;
+          // Random gap: decreases with score, wide variance for unpredictability
+          const minGap = Math.max(30, 65 - gs.score / 120);
+          const maxGap = Math.max(75, 200 - gs.score / 60);
+          gs.nextSpawn = minGap + Math.random() * Math.random() * (maxGap - minGap); // double-random = skewed short
+          spawnObstacles(gs);
+        }
+
+        // Move & collide
+        const carRight = CAR_LEFT + CAR_WIDTH;
+        gs.obstacles = gs.obstacles.filter(o => {
+          o.x -= gs.speed * dt;
+          if (o.x + o.w < -80) return false;
+          const carY = gs.positionY;
+          if (o.x < carRight - 18 && o.x + o.w > CAR_LEFT + 22 && carY > -(o.h - 8)) {
+            if (!gs.scored) {
+              gs.scored = true;
+              gs.highScores = saveHighScore(gs.score);
+              if (showGameOverRef.current) showGameOverRef.current({ score: Math.floor(gs.score), scores: gs.highScores });
+            }
+            gs.gameOver = true;
+          }
+          return true;
+        });
+
+        gs.score += 0.65 * dt;
       }
 
-      animRef.current = requestAnimationFrame(loop);
+      // Draw obstacles
+      gs.obstacles.forEach(o => drawObstacle(o, time));
+
+      // Ground
+      const groundG = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      groundG.addColorStop(0, 'transparent');
+      groundG.addColorStop(0.25, '#ff00ff');
+      groundG.addColorStop(0.5, '#00ffff');
+      groundG.addColorStop(0.75, '#ff00ff');
+      groundG.addColorStop(1, 'transparent');
+      ctx.fillStyle = groundG;
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 22;
+      ctx.fillRect(0, canvas.height - 6, canvas.width, 6);
+      ctx.shadowBlur = 0;
+
+      // Car
+      const carY = canvas.height - 6 - 52 - CAR_HEIGHT + gs.positionY;
+      drawSportsCar(CAR_LEFT, carY);
+
+      // HUD: Score
+      ctx.fillStyle = '#ff00ff';
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 12;
+      ctx.font = 'bold 22px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`SCORE: ${Math.floor(gs.score)}`, canvas.width - 30, 40);
+      ctx.textAlign = 'left';
+      ctx.font = '14px monospace';
+      ctx.fillStyle = '#00ffff';
+      ctx.shadowColor = '#00ffff';
+      ctx.fillText(`SPEED: ${(gs.speed).toFixed(1)}`, 30, 40);
+      ctx.shadowBlur = 0;
+
+      // Game over overlay (dim only — HTML overlay handles the rest)
+      if (gs.gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      animFrameRef.current = requestAnimationFrame(loop);
     }
 
-    winnerRef.current = setWinner;
-    animRef.current = requestAnimationFrame(loop);
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKey);
-    };
-  }, [initState]);
+    showGameOverRef.current = setGameOverScreen;
+    animFrameRef.current = requestAnimationFrame(loop);
 
-  const winColor = winner === 'YOU' ? '#00ffff' : '#ff00ff';
+    return () => {
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('keydown', handleKey);
+      cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [initState, jump, restart]);
+
+  const handleCanvasClick = () => {
+    const gs = gameStateRef.current;
+    if (gs.gameOver) restart();
+    else jump();
+  };
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center justify-center" style={{ background: '#05000f' }}>
-      <Link to="/" style={{ position: 'absolute', top: 16, left: 20, color: '#ffff00', fontFamily: 'monospace', fontSize: 13, textDecoration: 'none', letterSpacing: 1, opacity: 0.7 }}>
-        ← ARCADE
-      </Link>
-      <div style={{ position: 'relative', border: '2px solid #ffff00', boxShadow: '0 0 30px #ffff0055', maxWidth: '100%', overflow: 'hidden' }}>
-        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%' }} />
+    <div className="fixed inset-0">
+      <canvas ref={canvasRef} onClick={handleCanvasClick} className="w-full h-full" style={{ cursor: 'pointer' }} />
 
-        {winner && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
-            <div style={{
-              background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
-              border: `2px solid ${winColor}`,
-              boxShadow: `0 0 40px ${winColor}88`,
-              borderRadius: 14,
-              padding: '32px 44px',
-              textAlign: 'center',
-              fontFamily: 'monospace',
-            }}>
-              <div style={{ fontSize: 44, marginBottom: 8 }}>{winner === 'YOU' ? '🏆' : '🤖'}</div>
-              <div style={{ fontSize: 28, fontWeight: 'bold', color: winColor, textShadow: `0 0 16px ${winColor}`, letterSpacing: 2, marginBottom: 8 }}>
-                {winner === 'YOU' ? 'YOU WIN!' : 'AI WINS!'}
-              </div>
-              <p style={{ color: '#ccc', fontSize: 13, marginBottom: 20 }}>
-                {winner === 'YOU' ? 'Impressive moves, human.' : 'The machine is superior. Try again.'}
-              </p>
-              <button onClick={restart} style={{ background: winColor, color: '#000', border: 'none', borderRadius: 8, padding: '10px 28px', fontSize: 14, fontWeight: 'bold', fontFamily: 'monospace', cursor: 'pointer', letterSpacing: 2, boxShadow: `0 0 14px ${winColor}` }}>
-                ▶ PLAY AGAIN
-              </button>
+      {/* Game Over Screen */}
+      {gameOverScreen && (
+        <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 100 }}>
+          <div style={{
+            background: 'linear-gradient(160deg, #1a0033 0%, #0a0014 100%)',
+            border: '2px solid #ff00ff',
+            boxShadow: '0 0 40px #ff00ff88, 0 0 80px #ff00ff33',
+            borderRadius: 16,
+            padding: '36px 48px',
+            textAlign: 'center',
+            fontFamily: 'monospace',
+            minWidth: 320,
+          }}>
+            <div style={{ fontSize: 44, marginBottom: 4 }}>💥</div>
+            <div style={{ fontSize: 32, fontWeight: 'bold', color: '#ff00ff', textShadow: '0 0 16px #ff00ff', letterSpacing: 2, marginBottom: 6 }}>GAME OVER</div>
+            <div style={{ fontSize: 18, color: '#00ffff', textShadow: '0 0 8px #00ffff', marginBottom: 20 }}>Final Score: <span style={{ fontWeight: 'bold', fontSize: 22 }}>{gameOverScreen.score}</span></div>
+
+            {/* High scores */}
+            <div style={{ borderTop: '1px solid #ff00ff44', paddingTop: 14, marginBottom: 20 }}>
+              <div style={{ fontSize: 12, color: '#ff00ff', letterSpacing: 2, marginBottom: 10 }}>🏆 TOP 5 HIGH SCORES</div>
+              {(gameOverScreen.scores || []).map((s, i) => {
+                const medals = ['🥇','🥈','🥉','4.','5.'];
+                const isNew = i === 0 && gameOverScreen.score === s;
+                return (
+                  <div key={i} style={{
+                    fontSize: 14,
+                    color: isNew ? '#ffff00' : i === 0 ? '#ffd700' : i === 1 ? '#cccccc' : i === 2 ? '#cd7f32' : '#888',
+                    textShadow: isNew ? '0 0 10px #ffff00' : 'none',
+                    marginBottom: 4,
+                    fontWeight: isNew ? 'bold' : 'normal',
+                  }}>
+                    {medals[i]} &nbsp;{s}{isNew ? '  ◀ YOU' : ''}
+                  </div>
+                );
+              })}
             </div>
+
+            <button
+              onClick={restart}
+              style={{
+                background: '#ff00ff',
+                color: '#000',
+                border: 'none',
+                borderRadius: 8,
+                padding: '12px 36px',
+                fontSize: 16,
+                fontWeight: 'bold',
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+                cursor: 'pointer',
+                boxShadow: '0 0 18px #ff00ff',
+                transition: 'transform 0.1s',
+              }}
+              onMouseEnter={e => e.target.style.transform = 'scale(1.07)'}
+              onMouseLeave={e => e.target.style.transform = 'scale(1)'}
+            >
+              ▶ RESTART RACE
+            </button>
           </div>
-        )}
+        </div>
+      )}
+
+      <Link to="/" style={{ position: 'absolute', top: 16, left: 20, color: '#ff00ff', fontFamily: 'monospace', fontSize: 13, textDecoration: 'none', letterSpacing: 1, opacity: 0.7, zIndex: 50 }}>← ARCADE</Link>
+
+      {/* Controls hint */}
+      <div
+        className="absolute bottom-10 left-6"
+        style={{ fontFamily: 'monospace', fontSize: 12, color: '#ffffff44', lineHeight: 1.8, pointerEvents: 'none' }}
+      >
+        <div>SPACE / TAP — jump</div>
+        <div>avoid obstacles</div>
       </div>
-      <div style={{ color: '#ffffff33', fontFamily: 'monospace', fontSize: 11, marginTop: 12 }}>W/S or ↑↓ to move · First to {WIN_SCORE} wins</div>
     </div>
   );
 }
