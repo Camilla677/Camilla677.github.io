@@ -55,11 +55,6 @@
           this.muted = false;
           this.volume = 0.5; // Master Volume (0.0 to 1.0)
           this.gainNode = null;
-
-          // Custom File Playback Support
-          this.audioElement = new Audio();
-          this.audioElement.loop = true;
-          this.audioSource = null;
         }
 
         init() {
@@ -68,10 +63,6 @@
             this.gainNode = this.ctx.createGain();
             this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime);
             this.gainNode.connect(this.ctx.destination);
-
-            // Connect custom audio element to contextual gain node
-            this.audioSource = this.ctx.createMediaElementSource(this.audioElement);
-            this.audioSource.connect(this.gainNode);
           }
           if (this.ctx.state === "suspended") {
             this.ctx.resume();
@@ -83,7 +74,6 @@
           if (this.gainNode && this.ctx) {
             this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime);
           }
-          this.audioElement.volume = this.volume;
         }
 
         playSFX(freq, type, duration, slideTo = null) {
@@ -103,33 +93,25 @@
           osc.stop(this.ctx.currentTime + duration);
         }
 
-        startRadio(trackType = "synth", customUrl = "") {
+        startRadio() {
           this.init();
           this.stopRadio();
           this.isPlaying = true;
+          this.currentBeat = 0;
+          
+          const scheduleAhead = 0.15;
+          let nextNoteTime = this.ctx.currentTime;
 
-          if (trackType === "custom" && customUrl) {
-            this.audioElement.src = customUrl;
-            this.audioElement.volume = this.volume;
-            this.audioElement.play().catch(err => console.log("Audio play blocked: ", err));
-          } else {
-            this.audioElement.pause();
-            this.currentBeat = 0;
-            
-            const scheduleAhead = 0.15;
-            let nextNoteTime = this.ctx.currentTime;
-
-            const scheduler = () => {
-              while (nextNoteTime < this.ctx.currentTime + scheduleAhead) {
-                this.playStationBeat(this.currentBeat, nextNoteTime);
-                const secondsPerBeat = 60.0 / this.tempo / 4; // 16th note subdivision
-                nextNoteTime += secondsPerBeat;
-                this.currentBeat = (this.currentBeat + 1) % 16;
-              }
-              this.timerId = setTimeout(scheduler, 50);
-            };
-            scheduler();
-          }
+          const scheduler = () => {
+            while (nextNoteTime < this.ctx.currentTime + scheduleAhead) {
+              this.playStationBeat(this.currentBeat, nextNoteTime);
+              const secondsPerBeat = 60.0 / this.tempo / 4; // 16th note subdivision
+              nextNoteTime += secondsPerBeat;
+              this.currentBeat = (this.currentBeat + 1) % 16;
+            }
+            this.timerId = setTimeout(scheduler, 50);
+          };
+          scheduler();
         }
 
         stopRadio() {
@@ -138,7 +120,6 @@
             clearTimeout(this.timerId);
             this.timerId = null;
           }
-          this.audioElement.pause();
         }
 
         playStationBeat(beat, time) {
@@ -229,7 +210,7 @@
             return;
           }
 
-          // --- PRESET 3: COCO JAMBO ---
+          // --- COCO JAMBO - ORIGINAL REGGAE ---
           if (this.trackIndex === 2) {
             const cocoNotes = [
               311.13, 0, 293.66, 0, 261.63, 0, 293.66, 0,
@@ -291,7 +272,7 @@
             return;
           }
 
-          // --- PRESET 4: COCO JAMBO REMIX ---
+          // --- COCO JAMBO - FAST RAVE REMIX ---
           if (this.trackIndex === 3) {
             const cocoNotesFast = [
               261.63, 261.63, 293.66, 293.66, 311.13, 311.13, 293.66, 293.66,
@@ -332,17 +313,16 @@
       // --- MAIN RETRO CONSOLE ---
       function App() {
         const [activeGame, setActiveGame] = useState("lobby");
-        const [isPlayingMusic, setIsPlayingMusic] = useState(true); // Attempt starting enabled by default
+        const [isPlayingMusic, setIsPlayingMusic] = useState(true); // Default setup for automatically playing music
         const [trackIndex, setTrackIndex] = useState(0);
         const [volume, setVolume] = useState(50);
         const [crtFilter, setCrtFilter] = useState(true);
-        const fileInputRef = useRef(null);
 
-        const [trackList, setTrackList] = useState([
-          { name: "TRACK_01: PUMP_IT_CHIP.MID", type: "synth", tempo: 154 },
-          { name: "TRACK_02: PUMP_IT_REMIX.MID", type: "synth", tempo: 125 },
-          { name: "TRACK_03: COCO_JAMBO_CHIP.MID", type: "synth", tempo: 100 },
-          { name: "TRACK_04: COCO_JAMBO_REMIX.MID", type: "synth", tempo: 130 }
+        const [trackList] = useState([
+          { name: "PUMP IT - HYPER CHIP", tempo: 154 },
+          { name: "PUMP IT - DRIVE REMIX", tempo: 125 },
+          { name: "COCO JAMBO - ORIGINAL REGGAE", tempo: 100 },
+          { name: "COCO JAMBO - FAST RAVE REMIX", tempo: 130 }
         ]);
 
         // Autoplay gesture handler setup
@@ -353,10 +333,10 @@
 
           const startAudioOnGesture = () => {
             radio.init();
-            radio.startRadio("synth");
+            radio.startRadio();
             setIsPlayingMusic(true);
 
-            // Clean up temporary listeners once Web Audio is initialized
+            // Clean up temporary listeners once Web Audio is unlocked
             window.removeEventListener("click", startAudioOnGesture);
             window.removeEventListener("keydown", startAudioOnGesture);
             window.removeEventListener("touchstart", startAudioOnGesture);
@@ -369,7 +349,7 @@
           window.addEventListener("mousedown", startAudioOnGesture);
 
           try {
-            radio.startRadio("synth");
+            radio.startRadio();
           } catch(e) {}
 
           return () => {
@@ -380,14 +360,14 @@
           };
         }, [trackList]);
 
-        const changeTrack = (index, list = trackList) => {
+        const changeTrack = (index) => {
           radio.init();
           setTrackIndex(index);
           radio.trackIndex = index;
-          radio.tempo = list[index].tempo;
+          radio.tempo = trackList[index].tempo;
 
           if (isPlayingMusic) {
-            radio.startRadio(list[index].type, list[index].url || "");
+            radio.startRadio();
           }
         };
 
@@ -397,8 +377,7 @@
             radio.stopRadio();
             setIsPlayingMusic(false);
           } else {
-            const currentTrack = trackList[trackIndex];
-            radio.startRadio(currentTrack.type, currentTrack.url || "");
+            radio.startRadio();
             setIsPlayingMusic(true);
           }
         };
@@ -408,8 +387,7 @@
           const nextIndex = (trackIndex + 1) % trackList.length;
           changeTrack(nextIndex);
           if (!isPlayingMusic) {
-            const currentTrack = trackList[nextIndex];
-            radio.startRadio(currentTrack.type, currentTrack.url || "");
+            radio.startRadio();
             setIsPlayingMusic(true);
           }
           radio.playSFX(880, 'sine', 0.1);
@@ -419,29 +397,6 @@
           const val = parseInt(e.target.value, 10);
           setVolume(val);
           radio.setVolume(val / 100);
-        };
-
-        const handleFileUpload = (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-
-          const objectUrl = URL.createObjectURL(file);
-          const newTrack = {
-            name: `USER: ${file.name.toUpperCase()}`,
-            type: "custom",
-            url: objectUrl,
-            tempo: 120
-          };
-
-          const updatedList = [...trackList, newTrack];
-          setTrackList(updatedList);
-          
-          const newIndex = updatedList.length - 1;
-          setTrackIndex(newIndex);
-          radio.trackIndex = newIndex;
-          radio.tempo = 120;
-          radio.startRadio("custom", objectUrl);
-          setIsPlayingMusic(true);
         };
 
         return (
@@ -514,21 +469,6 @@
                   </button>
 
                   <button
-                    onClick={() => fileInputRef.current.click()}
-                    className="px-2 py-1 bg-[#ff007f]/20 hover:bg-[#ff007f]/40 border border-[#ff007f]/40 text-xs text-white font-bold transition-colors"
-                    title="Load an MP3 or Sound file from your device"
-                  >
-                    📁 LOAD MP3
-                  </button>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileUpload}
-                    accept="audio/*"
-                    className="hidden"
-                  />
-
-                  <button
                     onClick={() => setCrtFilter(!crtFilter)}
                     className={`px-2 py-1 border text-xs font-bold ${crtFilter ? 'bg-[#00ffcc] text-black border-transparent' : 'border-gray-600 text-gray-500'}`}
                   >
@@ -546,7 +486,7 @@
                 {activeGame === "lobby" ? (
                   <div className="flex-1 flex flex-col justify-center items-center text-center p-4">
                     <p className="text-xs text-gray-400 max-w-sm mb-8 font-mono">
-                      Select a game module to launch its canvas terminal.
+                      Select a game module to launch its canvas terminal. Soundtrack will play automatically.
                     </p>
 
                     <div className="grid grid-cols-2 gap-4 w-full max-w-md">
@@ -589,7 +529,7 @@
             </main>
 
             <footer className="bg-black text-[10px] text-gray-600 text-center py-3 border-t border-gray-900 mt-auto uppercase tracking-wide">
-              SYSTEM ONLINE. ADD YOUR OWN BACKING MUSIC VIA THE &quot;LOAD MP3&quot; HUD SLOT.
+              SYSTEM ONLINE. ENJOY THE CUSTOM 90S & Y2K RETRO SOUNDTRACK.
             </footer>
           </div>
         );
