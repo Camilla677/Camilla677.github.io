@@ -24,6 +24,17 @@
       .scanline-effect {
         animation: scanline 8s linear infinite;
       }
+      /* Equalizer Bar Animation */
+      @keyframes bounce {
+        0%, 100% { height: 4px; }
+        50% { height: 16px; }
+      }
+      .eq-bar {
+        animation: bounce 0.8s ease-in-out infinite;
+      }
+      .eq-bar:nth-child(2) { animation-delay: 0.15s; }
+      .eq-bar:nth-child(3) { animation-delay: 0.3s; }
+      .eq-bar:nth-child(4) { animation-delay: 0.45s; }
     </style>
   </head>
   <body class="bg-[#05010d] text-[#00ffcc] overflow-x-hidden select-none">
@@ -32,26 +43,47 @@
     <script type="text/babel">
       const { useState, useEffect, useRef, useCallback } = React;
 
-      // --- WEB AUDIO ENGINE & SEQUENCER (Synth Radio Station) ---
+      // --- WEB AUDIO ENGINE & SEQUENCER ---
       class RadioEngine {
         constructor() {
           this.ctx = null;
           this.isPlaying = false;
           this.trackIndex = 0;
-          this.tempo = 125;
+          this.tempo = 154; // Default starting tempo for Pump It
           this.currentBeat = 0;
           this.timerId = null;
           this.muted = false;
-          this.freqs = [110, 130, 146, 165]; // Bassline notes
+          this.volume = 0.5; // Master Volume (0.0 to 1.0)
+          this.gainNode = null;
+
+          // Custom File Playback Support
+          this.audioElement = new Audio();
+          this.audioElement.loop = true;
+          this.audioSource = null;
         }
 
         init() {
           if (!this.ctx) {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+            this.gainNode = this.ctx.createGain();
+            this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+            this.gainNode.connect(this.ctx.destination);
+
+            // Connect custom audio element to contextual gain node
+            this.audioSource = this.ctx.createMediaElementSource(this.audioElement);
+            this.audioSource.connect(this.gainNode);
           }
           if (this.ctx.state === "suspended") {
             this.ctx.resume();
           }
+        }
+
+        setVolume(newVal) {
+          this.volume = Math.max(0, Math.min(1, newVal));
+          if (this.gainNode && this.ctx) {
+            this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+          }
+          this.audioElement.volume = this.volume;
         }
 
         playSFX(freq, type, duration, slideTo = null) {
@@ -63,7 +95,7 @@
           if (slideTo) {
             osc.frequency.exponentialRampToValueAtTime(slideTo, this.ctx.currentTime + duration);
           }
-          gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+          gain.gain.setValueAtTime(0.08 * this.volume, this.ctx.currentTime);
           gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
           osc.connect(gain);
           gain.connect(this.ctx.destination);
@@ -71,25 +103,33 @@
           osc.stop(this.ctx.currentTime + duration);
         }
 
-        startRadio() {
+        startRadio(trackType = "synth", customUrl = "") {
           this.init();
-          if (this.isPlaying) return;
+          this.stopRadio();
           this.isPlaying = true;
-          this.currentBeat = 0;
-          
-          const scheduleAhead = 0.15;
-          let nextNoteTime = this.ctx.currentTime;
 
-          const scheduler = () => {
-            while (nextNoteTime < this.ctx.currentTime + scheduleAhead) {
-              this.playStationBeat(this.currentBeat, nextNoteTime);
-              const secondsPerBeat = 60.0 / this.tempo / 2;
-              nextNoteTime += secondsPerBeat;
-              this.currentBeat = (this.currentBeat + 1) % 16;
-            }
-            this.timerId = setTimeout(scheduler, 50);
-          };
-          scheduler();
+          if (trackType === "custom" && customUrl) {
+            this.audioElement.src = customUrl;
+            this.audioElement.volume = this.volume;
+            this.audioElement.play().catch(err => console.log("Audio play blocked: ", err));
+          } else {
+            this.audioElement.pause();
+            this.currentBeat = 0;
+            
+            const scheduleAhead = 0.15;
+            let nextNoteTime = this.ctx.currentTime;
+
+            const scheduler = () => {
+              while (nextNoteTime < this.ctx.currentTime + scheduleAhead) {
+                this.playStationBeat(this.currentBeat, nextNoteTime);
+                const secondsPerBeat = 60.0 / this.tempo / 4; // 16th note subdivision
+                nextNoteTime += secondsPerBeat;
+                this.currentBeat = (this.currentBeat + 1) % 16;
+              }
+              this.timerId = setTimeout(scheduler, 50);
+            };
+            scheduler();
+          }
         }
 
         stopRadio() {
@@ -98,70 +138,258 @@
             clearTimeout(this.timerId);
             this.timerId = null;
           }
+          this.audioElement.pause();
         }
 
         playStationBeat(beat, time) {
           if (this.muted) return;
           
-          const noteIndex = Math.floor(beat / 4) % this.freqs.length;
-          const baseFreq = this.freqs[noteIndex];
-
-          if (beat % 2 === 0) {
+          // --- PRESET 1: PUMP IT CHIP ---
+          if (this.trackIndex === 0) {
+            const pumpItNotes = [
+              164.81, 164.81, 164.81, 164.81, 174.61, 207.65, 220.00, 220.00,
+              246.94, 261.63, 311.13, 311.13, 261.63, 246.94, 220.00, 207.65
+            ];
+            
+            const freq = pumpItNotes[beat];
+            
             const osc = this.ctx.createOscillator();
             const gain = this.ctx.createGain();
-            osc.type = "triangle";
-            osc.frequency.setValueAtTime(baseFreq, time);
-            gain.gain.setValueAtTime(0.05, time);
-            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+            osc.type = "sawtooth";
+            osc.frequency.setValueAtTime(freq, time);
+            gain.gain.setValueAtTime(this.volume * 0.05, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
             osc.connect(gain);
             gain.connect(this.ctx.destination);
             osc.start(time);
-            osc.stop(time + 0.2);
+            osc.stop(time + 0.12);
+
+            if (beat % 4 === 0) {
+              const bd = this.ctx.createOscillator();
+              const bdGain = this.ctx.createGain();
+              bd.type = "sine";
+              bd.frequency.setValueAtTime(120, time);
+              bd.frequency.exponentialRampToValueAtTime(35, time + 0.15);
+              bdGain.gain.setValueAtTime(this.volume * 0.25, time);
+              bdGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+              bd.connect(bdGain);
+              bdGain.connect(this.ctx.destination);
+              bd.start(time);
+              bd.stop(time + 0.15);
+            }
+            return;
           }
 
-          if (this.trackIndex === 0) {
-            if (beat % 4 === 0 || beat === 7 || beat === 11) {
-              const osc = this.ctx.createOscillator();
-              const gain = this.ctx.createGain();
-              osc.type = "sine";
-              osc.frequency.setValueAtTime(baseFreq * 3, time);
-              gain.gain.setValueAtTime(0.02, time);
-              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
-              osc.connect(gain);
-              gain.connect(this.ctx.destination);
-              osc.start(time);
-              osc.stop(time + 0.12);
-            }
-          } else {
-            if (beat % 3 === 0) {
+          // --- PRESET 2: PUMP IT REMIX ---
+          if (this.trackIndex === 1) {
+            const pumpItRemixNotes = [
+              164.81, 0, 164.81, 0, 174.61, 0, 207.65, 0,
+              220.00, 0, 246.94, 0, 261.63, 0, 164.81, 0
+            ];
+            const freq = pumpItRemixNotes[beat];
+            if (freq > 0) {
               const osc = this.ctx.createOscillator();
               const gain = this.ctx.createGain();
               osc.type = "square";
-              osc.frequency.setValueAtTime(baseFreq * 4, time);
-              gain.gain.setValueAtTime(0.015, time);
-              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+              osc.frequency.setValueAtTime(freq, time);
+              gain.gain.setValueAtTime(this.volume * 0.04, time);
+              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
               osc.connect(gain);
               gain.connect(this.ctx.destination);
               osc.start(time);
-              osc.stop(time + 0.08);
+              osc.stop(time + 0.18);
             }
+
+            if (beat % 2 === 0) {
+              const bass = this.ctx.createOscillator();
+              const bassGain = this.ctx.createGain();
+              bass.type = "triangle";
+              bass.frequency.setValueAtTime(82.41, time);
+              bassGain.gain.setValueAtTime(this.volume * 0.08, time);
+              bassGain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+              bass.connect(bassGain);
+              bassGain.connect(this.ctx.destination);
+              bass.start(time);
+              bass.stop(time + 0.2);
+            }
+
+            if (beat % 4 === 0) {
+              const bd = this.ctx.createOscillator();
+              const bdGain = this.ctx.createGain();
+              bd.type = "sine";
+              bd.frequency.setValueAtTime(90, time);
+              bd.frequency.exponentialRampToValueAtTime(30, time + 0.2);
+              bdGain.gain.setValueAtTime(this.volume * 0.2, time);
+              bdGain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+              bd.connect(bdGain);
+              bdGain.connect(this.ctx.destination);
+              bd.start(time);
+              bd.stop(time + 0.2);
+            }
+            return;
+          }
+
+          // --- PRESET 3: COCO JAMBO ---
+          if (this.trackIndex === 2) {
+            const cocoNotes = [
+              311.13, 0, 293.66, 0, 261.63, 0, 293.66, 0,
+              261.63, 0, 233.08, 0, 196.00, 207.65, 233.08, 261.63
+            ];
+            
+            const freq = cocoNotes[beat];
+            
+            if (freq > 0) {
+              const osc = this.ctx.createOscillator();
+              const gain = this.ctx.createGain();
+              osc.type = "sine"; 
+              osc.frequency.setValueAtTime(freq, time);
+              gain.gain.setValueAtTime(this.volume * 0.07, time);
+              gain.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+              osc.connect(gain);
+              gain.connect(this.ctx.destination);
+              osc.start(time);
+              osc.stop(time + 0.2);
+            }
+
+            if (beat % 4 === 2) {
+              const chordOsc1 = this.ctx.createOscillator();
+              const chordOsc2 = this.ctx.createOscillator();
+              const chordGain = this.ctx.createGain();
+              
+              chordOsc1.type = "triangle";
+              chordOsc2.type = "triangle";
+              
+              chordOsc1.frequency.setValueAtTime(261.63, time);
+              chordOsc2.frequency.setValueAtTime(311.13, time);
+              
+              chordGain.gain.setValueAtTime(this.volume * 0.04, time);
+              chordGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+              
+              chordOsc1.connect(chordGain);
+              chordOsc2.connect(chordGain);
+              chordGain.connect(this.ctx.destination);
+              
+              chordOsc1.start(time);
+              chordOsc2.start(time);
+              chordOsc1.stop(time + 0.15);
+              chordOsc2.stop(time + 0.15);
+            }
+
+            if (beat % 4 === 0) {
+              const bd = this.ctx.createOscillator();
+              const bdGain = this.ctx.createGain();
+              bd.type = "sine";
+              bd.frequency.setValueAtTime(100, time);
+              bd.frequency.exponentialRampToValueAtTime(30, time + 0.18);
+              bdGain.gain.setValueAtTime(this.volume * 0.2, time);
+              bdGain.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+              bd.connect(bdGain);
+              bdGain.connect(this.ctx.destination);
+              bd.start(time);
+              bd.stop(time + 0.18);
+            }
+            return;
+          }
+
+          // --- PRESET 4: COCO JAMBO REMIX ---
+          if (this.trackIndex === 3) {
+            const cocoNotesFast = [
+              261.63, 261.63, 293.66, 293.66, 311.13, 311.13, 293.66, 293.66,
+              261.63, 261.63, 233.08, 233.08, 196.00, 207.65, 233.08, 261.63
+            ];
+            const freq = cocoNotesFast[beat];
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = "sawtooth";
+            osc.frequency.setValueAtTime(freq, time);
+            gain.gain.setValueAtTime(this.volume * 0.05, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(time);
+            osc.stop(time + 0.1);
+
+            if (beat % 4 === 0) {
+              const bd = this.ctx.createOscillator();
+              const bdGain = this.ctx.createGain();
+              bd.type = "sine";
+              bd.frequency.setValueAtTime(110, time);
+              bd.frequency.exponentialRampToValueAtTime(35, time + 0.15);
+              bdGain.gain.setValueAtTime(this.volume * 0.25, time);
+              bdGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+              bd.connect(bdGain);
+              bdGain.connect(this.ctx.destination);
+              bd.start(time);
+              bd.stop(time + 0.15);
+            }
+            return;
           }
         }
       }
 
       const radio = new RadioEngine();
 
-      const TRACK_LIST = [
-        { name: "TRACK_01: ELECTRO_CYBER.MID", tempo: 130 },
-        { name: "TRACK_02: CHIP_RUNNER.MID", tempo: 118 }
-      ];
-
       // --- MAIN RETRO CONSOLE ---
       function App() {
         const [activeGame, setActiveGame] = useState("lobby");
-        const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+        const [isPlayingMusic, setIsPlayingMusic] = useState(true); // Attempt starting enabled by default
         const [trackIndex, setTrackIndex] = useState(0);
+        const [volume, setVolume] = useState(50);
         const [crtFilter, setCrtFilter] = useState(true);
+        const fileInputRef = useRef(null);
+
+        const [trackList, setTrackList] = useState([
+          { name: "TRACK_01: PUMP_IT_CHIP.MID", type: "synth", tempo: 154 },
+          { name: "TRACK_02: PUMP_IT_REMIX.MID", type: "synth", tempo: 125 },
+          { name: "TRACK_03: COCO_JAMBO_CHIP.MID", type: "synth", tempo: 100 },
+          { name: "TRACK_04: COCO_JAMBO_REMIX.MID", type: "synth", tempo: 130 }
+        ]);
+
+        // Autoplay gesture handler setup
+        useEffect(() => {
+          radio.init();
+          radio.trackIndex = 0;
+          radio.tempo = trackList[0].tempo;
+
+          const startAudioOnGesture = () => {
+            radio.init();
+            radio.startRadio("synth");
+            setIsPlayingMusic(true);
+
+            // Clean up temporary listeners once Web Audio is initialized
+            window.removeEventListener("click", startAudioOnGesture);
+            window.removeEventListener("keydown", startAudioOnGesture);
+            window.removeEventListener("touchstart", startAudioOnGesture);
+            window.removeEventListener("mousedown", startAudioOnGesture);
+          };
+
+          window.addEventListener("click", startAudioOnGesture);
+          window.addEventListener("keydown", startAudioOnGesture);
+          window.addEventListener("touchstart", startAudioOnGesture);
+          window.addEventListener("mousedown", startAudioOnGesture);
+
+          try {
+            radio.startRadio("synth");
+          } catch(e) {}
+
+          return () => {
+            window.removeEventListener("click", startAudioOnGesture);
+            window.removeEventListener("keydown", startAudioOnGesture);
+            window.removeEventListener("touchstart", startAudioOnGesture);
+            window.removeEventListener("mousedown", startAudioOnGesture);
+          };
+        }, [trackList]);
+
+        const changeTrack = (index, list = trackList) => {
+          radio.init();
+          setTrackIndex(index);
+          radio.trackIndex = index;
+          radio.tempo = list[index].tempo;
+
+          if (isPlayingMusic) {
+            radio.startRadio(list[index].type, list[index].url || "");
+          }
+        };
 
         const handleToggleMusic = () => {
           radio.init();
@@ -169,25 +397,51 @@
             radio.stopRadio();
             setIsPlayingMusic(false);
           } else {
-            radio.startRadio();
+            const currentTrack = trackList[trackIndex];
+            radio.startRadio(currentTrack.type, currentTrack.url || "");
             setIsPlayingMusic(true);
           }
         };
 
         const handleNextTrack = () => {
           radio.init();
-          const nextIndex = (trackIndex + 1) % TRACK_LIST.length;
-          radio.trackIndex = nextIndex;
-          radio.tempo = TRACK_LIST[nextIndex].tempo;
-          setTrackIndex(nextIndex);
+          const nextIndex = (trackIndex + 1) % trackList.length;
+          changeTrack(nextIndex);
           if (!isPlayingMusic) {
-            radio.startRadio();
+            const currentTrack = trackList[nextIndex];
+            radio.startRadio(currentTrack.type, currentTrack.url || "");
             setIsPlayingMusic(true);
-          } else {
-            radio.stopRadio();
-            radio.startRadio();
           }
           radio.playSFX(880, 'sine', 0.1);
+        };
+
+        const handleVolumeChange = (e) => {
+          const val = parseInt(e.target.value, 10);
+          setVolume(val);
+          radio.setVolume(val / 100);
+        };
+
+        const handleFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const objectUrl = URL.createObjectURL(file);
+          const newTrack = {
+            name: `USER: ${file.name.toUpperCase()}`,
+            type: "custom",
+            url: objectUrl,
+            tempo: 120
+          };
+
+          const updatedList = [...trackList, newTrack];
+          setTrackList(updatedList);
+          
+          const newIndex = updatedList.length - 1;
+          setTrackIndex(newIndex);
+          radio.trackIndex = newIndex;
+          radio.tempo = 120;
+          radio.startRadio("custom", objectUrl);
+          setIsPlayingMusic(true);
         };
 
         return (
@@ -199,40 +453,88 @@
               </div>
             )}
 
-            {/* Subdued Header */}
-            <header className="border-b-2 border-gray-800 bg-[#0c051a] p-3 flex flex-col md:flex-row justify-between items-center gap-4 z-10">
+            {/* Retro Control Header Deck */}
+            <header className="border-b-2 border-gray-800 bg-[#0c051a] p-3 flex flex-col lg:flex-row justify-between items-center gap-4 z-10">
               <span className="text-sm font-bold tracking-widest text-[#00ffcc]">ARCADE STATION</span>
 
               {/* Radio Controller HUD */}
-              <div className="flex flex-wrap items-center gap-3 bg-[#110924] border border-[#00ffcc]/20 p-2 rounded w-full md:w-auto">
-                <div className="flex flex-col flex-1 md:flex-none md:w-56 overflow-hidden">
-                  <span className="text-[10px] text-gray-400">RADIO FREQUENCY:</span>
-                  <span className="text-xs text-white truncate font-mono">
-                    {isPlayingMusic ? TRACK_LIST[trackIndex].name : "OFFLINE"}
-                  </span>
+              <div className="flex flex-wrap items-center gap-4 bg-[#110924] border border-[#00ffcc]/20 p-3 rounded w-full lg:w-auto">
+                
+                {/* Visualizer & Metadata */}
+                <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+                  {/* Equalizer display */}
+                  <div className="flex items-end gap-0.5 w-6 h-5 bg-black/40 border border-[#00ffcc]/10 p-0.5">
+                    <span className={`eq-bar w-1 bg-[#00ffcc] ${isPlayingMusic ? '' : 'h-[2px] !animation-none'}`} />
+                    <span className={`eq-bar w-1 bg-[#00ffcc] ${isPlayingMusic ? '' : 'h-[2px] !animation-none'}`} />
+                    <span className={`eq-bar w-1 bg-[#00ffcc] ${isPlayingMusic ? '' : 'h-[2px] !animation-none'}`} />
+                    <span className={`eq-bar w-1 bg-[#00ffcc] ${isPlayingMusic ? '' : 'h-[2px] !animation-none'}`} />
+                  </div>
+
+                  <div className="flex flex-col overflow-hidden">
+                    <span className="text-[9px] text-gray-400">AUDIO SOURCE CHANNEL:</span>
+                    <select
+                      value={trackIndex}
+                      onChange={(e) => changeTrack(parseInt(e.target.value, 10))}
+                      className="text-xs bg-black text-white border border-[#00ffcc]/30 p-1 rounded font-mono focus:outline-none focus:border-[#00ffcc] max-w-[210px] truncate"
+                    >
+                      {trackList.map((t, idx) => (
+                        <option key={idx} value={idx}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex gap-2">
+                {/* Volume Controller */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 font-mono">VOL</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    className="w-20 h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-[#00ffcc]"
+                  />
+                  <span className="text-xs text-white w-6 text-right font-mono">{volume}%</span>
+                </div>
+
+                {/* Control Triggers */}
+                <div className="flex items-center gap-2">
                   <button
                     onClick={handleToggleMusic}
-                    className="px-3 py-1 bg-gray-800 text-[#00ffcc] hover:bg-white hover:text-black text-xs font-bold transition-colors"
+                    className="px-3 py-1 bg-gray-800 text-[#00ffcc] hover:bg-white hover:text-black text-xs font-bold transition-colors border border-[#00ffcc]/30"
                   >
                     {isPlayingMusic ? "PAUSE" : "PLAY"}
                   </button>
                   <button
                     onClick={handleNextTrack}
-                    className="px-3 py-1 border border-gray-600 text-xs text-white font-bold"
+                    className="px-3 py-1 border border-gray-600 text-xs text-white font-bold hover:bg-[#1c1136]"
                   >
                     SKIP
                   </button>
-                </div>
 
-                <button
-                  onClick={() => setCrtFilter(!crtFilter)}
-                  className={`px-2 py-1 border text-xs font-bold ${crtFilter ? 'bg-[#00ffcc] text-black border-transparent' : 'border-gray-600 text-gray-500'}`}
-                >
-                  CRT
-                </button>
+                  <button
+                    onClick={() => fileInputRef.current.click()}
+                    className="px-2 py-1 bg-[#ff007f]/20 hover:bg-[#ff007f]/40 border border-[#ff007f]/40 text-xs text-white font-bold transition-colors"
+                    title="Load an MP3 or Sound file from your device"
+                  >
+                    📁 LOAD MP3
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    accept="audio/*"
+                    className="hidden"
+                  />
+
+                  <button
+                    onClick={() => setCrtFilter(!crtFilter)}
+                    className={`px-2 py-1 border text-xs font-bold ${crtFilter ? 'bg-[#00ffcc] text-black border-transparent' : 'border-gray-600 text-gray-500'}`}
+                  >
+                    CRT
+                  </button>
+                </div>
               </div>
             </header>
 
@@ -248,19 +550,19 @@
                     </p>
 
                     <div className="grid grid-cols-2 gap-4 w-full max-w-md">
-                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("flappy"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
+                      <div onClick={() => { radio.init(); radio.playSFX(440, 'sine', 0.1); setActiveGame("flappy"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
                         <span className="text-3xl block mb-1">🐦</span>
                         <h4 className="text-xs font-extrabold text-white">1. FLAPPY BIRD</h4>
                       </div>
-                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("jumper"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
+                      <div onClick={() => { radio.init(); radio.playSFX(440, 'sine', 0.1); setActiveGame("jumper"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
                         <span className="text-3xl block mb-1">🦒</span>
                         <h4 className="text-xs font-extrabold text-white">2. FENCE JUMPER</h4>
                       </div>
-                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("pong"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
+                      <div onClick={() => { radio.init(); radio.playSFX(440, 'sine', 0.1); setActiveGame("pong"); }} className="border-2 border-[#00ffcc]/50 hover:border-[#00ffcc] hover:bg-[#00ffcc]/5 p-4 rounded cursor-pointer transition-all text-center">
                         <span className="text-3xl block mb-1">🏓</span>
                         <h4 className="text-xs font-extrabold text-white">3. NEON PONG</h4>
                       </div>
-                      <div onClick={() => { radio.playSFX(440, 'sine', 0.1); setActiveGame("worm"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
+                      <div onClick={() => { radio.init(); radio.playSFX(440, 'sine', 0.1); setActiveGame("worm"); }} className="border-2 border-[#ff007f]/50 hover:border-[#ff007f] hover:bg-[#ff007f]/5 p-4 rounded cursor-pointer transition-all text-center">
                         <span className="text-3xl block mb-1">🐍</span>
                         <h4 className="text-xs font-extrabold text-white">4. RETRO WORM</h4>
                       </div>
@@ -271,7 +573,7 @@
                     {/* Navigation bar inside active game screens to return to Lobby */}
                     <div className="flex justify-between items-center border-b border-[#00ffcc]/20 pb-2 mb-3">
                       <button 
-                        onClick={() => { radio.playSFX(150, 'triangle', 0.15); setActiveGame("lobby"); }}
+                        onClick={() => { radio.init(); radio.playSFX(150, 'triangle', 0.15); setActiveGame("lobby"); }}
                         className="text-xs font-bold text-[#ff007f] hover:text-white transition-colors"
                       >
                         ← BACK TO LOBBY
@@ -286,14 +588,14 @@
               </div>
             </main>
 
-            <footer className="bg-black text-[10px] text-gray-600 text-center py-3 border-t border-gray-900 mt-auto">
-              SYSTEM ONLINE. SELECT A GAME FROM THE LOBBY CONTAINER.
+            <footer className="bg-black text-[10px] text-gray-600 text-center py-3 border-t border-gray-900 mt-auto uppercase tracking-wide">
+              SYSTEM ONLINE. ADD YOUR OWN BACKING MUSIC VIA THE &quot;LOAD MP3&quot; HUD SLOT.
             </footer>
           </div>
         );
       }
 
-      // --- GAME 1: FLAPPY BIRD (Scaled down to be smaller & more forgiving) ---
+      // --- GAME 1: FLAPPY BIRD ---
       function FlappyBirdGame() {
         const canvasRef = useRef(null);
         const [gameState, setGameState] = useState("idle");
@@ -312,6 +614,7 @@
         });
 
         const resetGame = () => {
+          radio.init();
           stateRef.current = {
             birdY: 150,
             velocity: 0,
@@ -329,6 +632,7 @@
         };
 
         const handleAction = () => {
+          radio.init();
           if (gameState === "idle" || gameState === "over") {
             resetGame();
           } else if (gameState === "playing") {
@@ -423,7 +727,6 @@
                   radio.playSFX(880, 'sine', 0.08, 1200);
                 }
 
-                // Collision detection adjusted to 7px radius for the smaller bird size
                 const bRadius = 7;
                 if (
                   (50 + bRadius > p.x && 50 - bRadius < p.x + p.width) &&
@@ -446,7 +749,6 @@
                 radio.playSFX(300, 'sawtooth', 0.3, 40);
               }
 
-              // Render smaller bird coordinates (scaled down by ~30%)
               ctx.save();
               ctx.translate(50, state.birdY);
               const angle = Math.min(Math.max(state.velocity * 0.08, -0.6), 0.8);
@@ -455,10 +757,10 @@
               ctx.strokeStyle = "#fff";
               ctx.lineWidth = 1.2;
               ctx.beginPath();
-              ctx.moveTo(8, 0);       // Head point (was 12)
-              ctx.lineTo(-7, -7);     // Upper back tail (was -10, -10)
-              ctx.lineTo(-4, 0);      // Middle recess (was -6, 0)
-              ctx.lineTo(-7, 7);      // Lower back tail (was -10, 10)
+              ctx.moveTo(8, 0);
+              ctx.lineTo(-7, -7);
+              ctx.lineTo(-4, 0);
+              ctx.lineTo(-7, 7);
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
@@ -478,7 +780,6 @@
               ctx.fillStyle = "#ff007f";
               ctx.fillText(countdown, canvas.width / 2, 165);
 
-              // Render stationary smaller bird
               ctx.save();
               ctx.translate(50, state.birdY);
               ctx.fillStyle = "#00ffcc";
@@ -554,6 +855,7 @@
         });
 
         const resetGame = () => {
+          radio.init();
           stateRef.current = {
             playerY: 0,
             velocity: 0,
@@ -571,6 +873,7 @@
         };
 
         const handleJump = () => {
+          radio.init();
           if (gameState === "idle" || gameState === "over") {
             resetGame();
           } else if (stateRef.current.isGrounded) {
@@ -785,6 +1088,7 @@
         }), []);
 
         const restart = useCallback(() => {
+          radio.init();
           stateRef.current = initState();
           setWinner(null);
           radio.playSFX(587.33, 'square', 0.15, 880);
@@ -797,9 +1101,32 @@
           canvas.width = W;
           canvas.height = H;
 
-          const onKey = (e) => { keysRef.current[e.code] = e.type === 'keydown'; };
+          const onKey = (e) => {
+            if (['ArrowUp', 'ArrowDown', 'KeyW', 'KeyS', 'Space'].includes(e.code)) {
+              e.preventDefault();
+            }
+            keysRef.current[e.code] = e.type === 'keydown'; 
+          };
           window.addEventListener('keydown', onKey);
           window.addEventListener('keyup', onKey);
+
+          const handleTouch = (e) => {
+            radio.init();
+            if (!stateRef.current) return;
+            const rect = canvas.getBoundingClientRect();
+            const touchY = e.touches[0].clientY - rect.top;
+            const scaleY = H / rect.height;
+            const targetY = touchY * scaleY - PADDLE_H / 2;
+            stateRef.current.player.y = Math.max(0, Math.min(H - PADDLE_H, targetY));
+          };
+
+          const handleTouchStart = (e) => {
+            e.preventDefault();
+            handleTouch(e);
+          };
+
+          canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+          canvas.addEventListener('touchmove', handleTouch, { passive: false });
 
           function resetBall(gs, dir) {
             gs.ball = { x: W / 2, y: H / 2, vx: dir * (4.5 + Math.random()), vy: (Math.random() - 0.5) * 6 };
@@ -946,6 +1273,8 @@
             cancelAnimationFrame(animRef.current);
             window.removeEventListener('keydown', onKey);
             window.removeEventListener('keyup', onKey);
+            canvas.removeEventListener('touchstart', handleTouchStart);
+            canvas.removeEventListener('touchmove', handleTouch);
           };
         }, [initState]);
 
@@ -955,7 +1284,7 @@
           <div className="flex-1 flex flex-col justify-between min-h-[300px] relative">
             <div className="flex justify-between items-center text-xs mb-2">
               <span className="text-gray-400">NEON PONG</span>
-              <span className="text-[#00ffcc] font-bold">W/S or Up/Down arrows to steer paddle</span>
+              <span className="text-[#00ffcc] font-bold">W/S or Up/Down (Touch & Drag on Mobile)</span>
             </div>
 
             <div className="relative border-2 border-[#00ffff]/50 bg-black flex-1 flex items-center justify-center overflow-hidden">
@@ -1005,6 +1334,7 @@
         });
 
         const resetGame = () => {
+          radio.init();
           stateRef.current = {
             worm: [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }],
             dx: 1,
